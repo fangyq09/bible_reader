@@ -1,4 +1,3 @@
-use uuid::Uuid;
 use chrono::Utc;
 use serde::{Serialize, Deserialize};
 use crate::theme::ThemeColors;
@@ -21,55 +20,6 @@ pub struct Notedb {
     pub updated_at: Option<String>,
 }
 
-// 右键菜单（添加笔记）
-pub fn show_right_click_menu(
-	response: &mut egui::Response,
-	show_notes_state: &mut bool,
-	version: &String,
-	book_num: Option<i32>, 
-	book_name: &Option<String>, 
-	chapter: &Option<String>,
-) {
-	response.context_menu(|ui| {
-		if ui.button("➕ 添加笔记").clicked() { 
-			// 生成新笔记
-			let note = Notedb {
-				id: Uuid::new_v4().to_string(),
-				created_at: Some(Utc::now().format("%Y-%m-%d").to_string()),
-				book_num,
-				book_name: book_name.clone(),
-				chapter: chapter.clone(),
-				verse_start: -1,
-				char_offset: Some(0),
-				version: Some(version.clone()),
-				..Default::default()
-			};
-
-			// 序列化成 JSON 传给子进程
-			let note_json = serde_json::to_string(&note).unwrap();
-
-			if let Err(e) = std::process::Command::new(std::env::current_exe().unwrap())
-				.arg("--note-window")
-					.arg("--note-json")
-					.arg(note_json)
-					.spawn()
-			{
-				eprintln!("无法启动笔记窗口: {e}");
-			}
-
-			ui.close_kind(egui::UiKind::Menu);
-		}
-		if ui.button("💬显示笔记").clicked() { 
-			*show_notes_state = true; 
-			ui.close_kind(egui::UiKind::Menu);
-		}
-		if ui.button("🍄隐藏笔记").clicked() { 
-			*show_notes_state = false; 
-			ui.close_kind(egui::UiKind::Menu);
-		}
-	});
-}
-
 pub fn readonly_text_with_comments(
 	ui: &mut eframe::egui::Ui,
 	text: &str, 
@@ -77,6 +27,7 @@ pub fn readonly_text_with_comments(
 	book_num: Option<i32>,
 	chapter: Option<String>,
 	open_note: &mut Option<Notedb>,
+	theme_colors: &ThemeColors,
 ) -> eframe::egui::Response {
 	let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
 	let mut mutable_content = text.to_owned();
@@ -90,7 +41,7 @@ pub fn readonly_text_with_comments(
 
 	let response = ui.add(text_edit);
 
-	show_appended_notes(ui, version, book_num, chapter, open_note);
+	show_appended_notes(ui, version, book_num, chapter, open_note,theme_colors);
 	response
 }
 
@@ -101,6 +52,7 @@ fn show_appended_notes(
 	book_num: Option<i32>,
 	chapter: Option<String>,
 	open_note: &mut Option<Notedb>,
+	theme_colors: &ThemeColors,
 ) {
 	let appended_notes = load_notes("notes", version, book_num, chapter);
 
@@ -128,15 +80,55 @@ fn show_appended_notes(
 			} else {
 				format!("【{}】「{}」", subject, title)
 			};
-			let btn = ui.link(display_text);
 
-			if btn.clicked() {
+			//let mut rich_text = egui::RichText::new(&display_text)
+			//	.color(egui::Color32::from_rgb(0, 128, 128))
+			//	.underline(); 
+
+			//let label = egui::Label::new(rich_text).sense(egui::Sense::click());
+			//let response = ui.add(label);
+
+			//if response.hovered() {
+			//	ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+			//}
+
+			//// 点击事件
+			//if response.clicked() {
+			//	*open_note = Some(note.clone());
+			//}
+
+			if hover_link(ui, &display_text, &theme_colors) {
 				*open_note = Some(note.clone());
 			}
 		});
 
 		ui.add_space(5.0);
 	}
+}
+
+pub fn hover_link(ui: &mut egui::Ui, text: &str, colors: &ThemeColors) -> bool {
+    // 创建 RichText
+    let rich_text = egui::RichText::new(text).color(colors.link_color);
+
+    // 添加 Label 并允许点击
+    let label = egui::Label::new(rich_text).sense(egui::Sense::click());
+    let response = ui.add(label);
+
+    // 悬停时显示下划线，并改变鼠标光标
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+				let rect = response.rect;
+				let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap().clone();
+				let text_height = ui.fonts(|f| f.row_height(&font_id));
+				let y = rect.bottom() - text_height * 0.1; // 下划线位置
+				let start = egui::Pos2 { x: rect.left(), y };
+				let end = egui::Pos2 { x: rect.right(), y };
+				ui.painter().line_segment(
+					[start, end],
+					egui::Stroke::new(1.0, colors.link_color),
+				);
+		}
+    response.clicked()
 }
 
 pub fn show_note_window(ctx: &egui::Context, colors: &ThemeColors, open_note: &mut Option<Notedb>) {

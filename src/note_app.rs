@@ -6,8 +6,48 @@ pub struct NoteApp {
 		pub note: Notedb,
 }
 
+fn note_visuals() -> egui::Visuals {
+	let mut v = egui::Visuals::light();
+
+	// ====== 背景 ======
+	v.window_fill = egui::Color32::from_rgb(248, 248, 245);
+	v.panel_fill  = egui::Color32::from_rgb(248, 248, 245);
+	v.extreme_bg_color = egui::Color32::from_rgb(235, 235, 230);
+
+	// ====== 分割线 ======
+	v.widgets.noninteractive.bg_stroke =
+		egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 220, 215));
+
+	// ====== 普通控件 ======
+	v.widgets.inactive.bg_fill =
+		egui::Color32::from_rgb(242, 242, 238);
+
+	v.widgets.hovered.bg_fill =
+		egui::Color32::from_rgb(230, 230, 225);
+
+	v.widgets.active.bg_fill =
+		egui::Color32::from_rgb(220, 220, 215);
+
+	// ====== 输入框 ======
+	v.widgets.inactive.bg_stroke =
+		egui::Stroke::new(1.0, egui::Color32::from_rgb(200, 200, 195));
+
+	v.widgets.hovered.bg_stroke =
+		egui::Stroke::new(1.0, egui::Color32::from_rgb(180, 180, 175));
+
+	// ====== 选中文本 ======
+	v.selection.bg_fill =
+		egui::Color32::from_rgb(180, 205, 235);
+
+	v.selection.stroke =
+		egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 160, 210));
+
+	v
+}
 impl eframe::App for NoteApp {
 	fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
+		ctx.set_visuals(note_visuals());
 
 		let note = &mut self.note;
 
@@ -66,7 +106,9 @@ impl eframe::App for NoteApp {
 				let btn_w = 80.0;
 				let btn_h = 28.0;
 				ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-					if ui.add_sized([btn_w, btn_h], egui::Button::new("🗑删除")).clicked() {
+					if ui.add_sized([btn_w, btn_h], egui::Button::new("🗑删除"))
+						.on_hover_cursor(egui::CursorIcon::Default)
+						.clicked() {
 						if let Err(e) = delete_note("notes", &note.id) {
 							eprintln!("删除笔记失败 id={}: {:?}", note.id, e);
 						} else {
@@ -76,7 +118,9 @@ impl eframe::App for NoteApp {
 					}
 				});
 				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-					if ui.add_sized([btn_w, btn_h], egui::Button::new("保存")).clicked() {
+					if ui.add_sized([btn_w, btn_h], egui::Button::new("保存"))
+						.on_hover_cursor(egui::CursorIcon::Default)
+						.clicked() {
 						save_note("notes", note);
 						ctx.send_viewport_cmd(egui::ViewportCommand::Close);
 					}

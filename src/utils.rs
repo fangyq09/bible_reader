@@ -1,5 +1,6 @@
 use rusqlite::Connection;
 use std::path::Path;
+use std::cmp::Ordering;
 
 
 /// 从 SQLite 数据库加载书卷
@@ -90,25 +91,148 @@ pub fn version_display_name(version: &str) -> String {
     version.trim_end_matches(".sqlite3").trim_end_matches(".db").to_string()
 }
 
+fn has_chinese(s: &str) -> bool {
+    s.chars().any(|c| {
+        ('\u{4E00}'..='\u{9FFF}').contains(&c)
+    })
+}
+
+/// 中文优先，其余字典序排序
+pub fn sort_versions_chinese_first(versions: &mut Vec<String>) {
+    versions.sort_by(|a, b| {
+        let a_cn = has_chinese(a);
+        let b_cn = has_chinese(b);
+
+        match (a_cn, b_cn) {
+            (true, false) => Ordering::Less,    // a 在前
+            (false, true) => Ordering::Greater, // b 在前
+            _ => a.cmp(b),                      // 同类：字典序
+        }
+    });
+}
+
 /// 只读多行文本显示
-//pub fn readonly_multiline_text(ui: &mut egui::Ui, text: &str) -> egui::Response {
+//pub fn readonly_content_text(ui: &mut egui::Ui, text: &str) -> egui::Response {
 //	let response = ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-//		ui.set_width(ui.available_width()); // 确保整个 layout 区域占满宽度
-//		// 使用 with_layout 包装，以应用所需的右侧边距
+//		ui.set_width(ui.available_width()); 
 //		ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-//			// 确保 Label 在这个宽度内换行
 //			ui.set_width(ui.available_width() - 12.0);
 //			let label = egui::RichText::new(text);
 //			ui.add(
 //				egui::Label::new(label)
-//				.sense(egui::Sense::click_and_drag())
+//				.sense(egui::Sense::click())
 //				.selectable(true)
 //			)
 //		}).inner
 //	}).response;
-//	// 返回响应
 //	response
 //}
+
+pub fn readonly_content_text_highlighted(
+	ui: &mut egui::Ui,
+	text: &str,
+	highlight: Option<&str>,
+) -> egui::Response {
+	let response = ui
+		.with_layout(
+			egui::Layout::top_down_justified(egui::Align::LEFT),
+			|ui| {
+				ui.set_width(ui.available_width());
+
+				ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+					ui.set_width(ui.available_width() - 12.0);
+
+					let mut job = egui::text::LayoutJob::default();
+
+					match highlight {
+						Some(query) if !query.is_empty() => {
+							highlight_search_terms(
+								text,
+								query,
+								ui.visuals().text_color(),
+								&mut job,
+							);
+						}
+						_ => {
+							job.append(
+								text,
+								0.0,
+								egui::TextFormat {
+									color: ui.visuals().text_color(),
+									..Default::default()
+								},
+							);
+						}
+					}
+
+					ui.add(
+						egui::Label::new(job)
+						.sense(egui::Sense::click())
+						.selectable(true),
+					)
+				})
+				.inner
+			},
+			)
+				.response;
+
+	response
+}
+
+pub fn highlight_search_terms(
+    text: &str,
+    search_terms: &str,
+    normal_color: egui::Color32,
+    job: &mut egui::text::LayoutJob, 
+) {
+    let mut last_index = 0;
+    let lower_text = text.to_lowercase();
+    let lower_query = search_terms.to_lowercase();
+
+    let mut start = 0;
+    while let Some(pos) = lower_text[start..].find(&lower_query) {
+        let match_start = start + pos;
+        let match_end = match_start + search_terms.len();
+
+        // 普通文本
+        if match_start > last_index {
+            job.append(
+                &text[last_index..match_start],
+                0.0,
+                egui::TextFormat {
+                    color: normal_color,
+                    ..Default::default()
+                },
+            );
+        }
+
+        // 高亮文本
+        job.append(
+            &text[match_start..match_end],
+            0.0,
+            egui::TextFormat {
+								color: egui::Color32::BLACK,            
+								background: egui::Color32::from_rgb(255, 215, 0),
+                ..Default::default()
+            },
+        );
+
+        last_index = match_end;
+        start = match_end;
+    }
+
+    // 剩余普通文本
+    if last_index < text.len() {
+        job.append(
+            &text[last_index..],
+            0.0,
+            egui::TextFormat {
+                color: normal_color,
+                ..Default::default()
+            },
+        );
+    }
+}
 pub fn readonly_multiline_text(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
     let mut mutable_content = text.to_owned();
@@ -116,7 +240,7 @@ pub fn readonly_multiline_text(ui: &mut egui::Ui, text: &str) -> egui::Response 
     let text_edit = egui::TextEdit::multiline(&mut mutable_content)
         .desired_width(ui.available_width() - 12.0)
         .frame(false)
-        .interactive(true) //interactive(true) 以确保 TextEdit 捕获点击和选择
+        .interactive(true) 
         .clip_text(false)
 				.font(body_font_id);
 
@@ -124,3 +248,26 @@ pub fn readonly_multiline_text(ui: &mut egui::Ui, text: &str) -> egui::Response 
     
     response
 }
+
+pub fn book_number_to_abbr(number: i32) -> &'static str {
+    // 圣经 66 卷的缩写，按常见顺序排列
+    const ABBRS: [&str; 66] = [
+        "创", "出", "利", "民", "申", "书", "士", "得", "撒上", "撒下",
+        "王上", "王下", "代上", "代下", "拉", "尼", "斯", "伯", "诗", "箴",
+        "传", "歌", "赛", "耶", "哀", "结", "但", "何", "珥", "摩",
+        "俄", "拿", "弥", "鸿", "哈", "番", "该", "亚", "玛",
+        "太", "可", "路", "约", "徒", "罗", "林前", "林后", "加", "弗",
+				"腓", "西", "帖前", "帖后", "提前", "提后", "多",
+        "门", "来", "雅", "彼前", "彼后", "约一", "约二", "约三", "犹", "启"
+    ];
+
+    if number >= 1 && number <= 66 {
+        ABBRS[(number - 1) as usize]
+    } else {
+        "未知"
+    }
+}
+
+
+
+

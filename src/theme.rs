@@ -20,6 +20,7 @@ pub struct ThemeColors {
 	pub item_bg: egui::Color32,         
 	pub item_text: egui::Color32,         
 	pub selected_text_color: egui::Color32,         
+	pub link_color: egui::Color32,         
 }
 
 pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
@@ -51,17 +52,22 @@ pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
 				item_bg: visuals.selection.bg_fill,
 				item_text: egui::Color32::from_rgb(220, 220, 220),
 				selected_text_color: egui::Color32::from_rgb(220, 220, 220),
+				link_color: egui::Color32::from_rgb(0, 191, 255),
 			}
 		}
 		Theme::Light => {
 			let mut visuals = egui::Visuals::light();
 			visuals.panel_fill = egui::Color32::from_rgb(242, 235, 217);
 			visuals.override_text_color = Some(egui::Color32::BLACK);
-			visuals.selection.bg_fill = egui::Color32::from_rgb(180, 200, 220);
+			//visuals.selection.bg_fill = egui::Color32::from_rgb(71, 78, 86);
+			visuals.selection.bg_fill = egui::Color32::from_rgb(41, 134, 204);
+
+			visuals.hyperlink_color = egui::Color32::from_rgb(0, 128, 128); 
 
 			// 按钮背景色
 			visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(230, 220, 200);
-			visuals.widgets.hovered.bg_fill  = egui::Color32::from_rgb(240, 230, 210);
+			//visuals.widgets.hovered.bg_fill  = egui::Color32::from_rgb(240, 230, 210);
+			visuals.widgets.hovered.bg_fill  = egui::Color32::from_rgb(255, 215, 0);
 			visuals.widgets.active.bg_fill   = egui::Color32::from_rgb(210, 200, 180);
 
 			//弹窗背景色
@@ -89,6 +95,7 @@ pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
 				item_bg: egui::Color32::from_rgb(180, 200, 220),
 				item_text: egui::Color32::BLACK,
 				selected_text_color: egui::Color32::from_rgb(220, 220, 220),
+				link_color: egui::Color32::from_rgb(0, 128, 128),
 			}
 		}
 	}
