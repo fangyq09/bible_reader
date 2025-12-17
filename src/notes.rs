@@ -1,6 +1,7 @@
 use chrono::Utc;
 use serde::{Serialize, Deserialize};
 use crate::theme::ThemeColors;
+use crate::BibleApp;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Notedb {
@@ -20,17 +21,14 @@ pub struct Notedb {
     pub updated_at: Option<String>,
 }
 
-pub fn readonly_text_with_comments(
+impl BibleApp {
+pub fn readonly_text_with_notes(
+	&mut self,
 	ui: &mut eframe::egui::Ui,
-	text: &str, 
-	version: &str,
-	book_num: Option<i32>,
-	chapter: Option<String>,
-	open_note: &mut Option<Notedb>,
 	theme_colors: &ThemeColors,
 ) -> eframe::egui::Response {
 	let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
-	let mut mutable_content = text.to_owned();
+	let mut mutable_content = self.content.clone();
 
 	let text_edit = egui::TextEdit::multiline(&mut mutable_content)
 		.desired_width(ui.available_width() - 12.0)
@@ -40,21 +38,21 @@ pub fn readonly_text_with_comments(
 		.font(body_font_id);
 
 	let response = ui.add(text_edit);
+	if self.show_notes {
+		self.show_appended_notes(ui,theme_colors);
+	}
 
-	show_appended_notes(ui, version, book_num, chapter, open_note,theme_colors);
 	response
 }
+}
 
-
+impl BibleApp {
 fn show_appended_notes(
+	&mut self,
 	ui: &mut eframe::egui::Ui,
-	version: &str,
-	book_num: Option<i32>,
-	chapter: Option<String>,
-	open_note: &mut Option<Notedb>,
 	theme_colors: &ThemeColors,
 ) {
-	let appended_notes = load_notes("notes", version, book_num, chapter);
+	let appended_notes = load_notes("notes", &self.current_version, self.current_book, self.current_chapter.clone());
 
 	if appended_notes.is_empty() {
 		return;
@@ -81,29 +79,14 @@ fn show_appended_notes(
 				format!("【{}】「{}」", subject, title)
 			};
 
-			//let mut rich_text = egui::RichText::new(&display_text)
-			//	.color(egui::Color32::from_rgb(0, 128, 128))
-			//	.underline(); 
-
-			//let label = egui::Label::new(rich_text).sense(egui::Sense::click());
-			//let response = ui.add(label);
-
-			//if response.hovered() {
-			//	ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-			//}
-
-			//// 点击事件
-			//if response.clicked() {
-			//	*open_note = Some(note.clone());
-			//}
-
 			if hover_link(ui, &display_text, &theme_colors) {
-				*open_note = Some(note.clone());
+				self.open_note = Some(note.clone());
 			}
 		});
 
 		ui.add_space(5.0);
 	}
+}
 }
 
 pub fn hover_link(ui: &mut egui::Ui, text: &str, colors: &ThemeColors) -> bool {

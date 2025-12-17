@@ -25,8 +25,9 @@ use crate::utils::{
 	book_number_to_abbr,
 	readonly_content_text_highlighted,
 	highlight_search_terms,
+	draw_hover_button,
 };
-use crate::notes::{readonly_text_with_comments,Notedb,show_note_window};
+use crate::notes::{Notedb,show_note_window};
 use crate::note_app::NoteApp;
 
 /// 应用状态
@@ -55,6 +56,7 @@ struct BibleApp {
 	show_version_menu: bool,
 	change_version_menu: bool,
 	show_theme_menu: bool,
+	show_highlight: bool,
 }
 pub fn configure_chinese_font(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
@@ -164,6 +166,7 @@ impl BibleApp {
 				show_version_menu: false,
 				change_version_menu: false,
 				show_theme_menu: false,
+				show_highlight: false,
 			};
 
 			// 若没有任何圣经数据库，就不加载，直接返回 app
@@ -627,32 +630,6 @@ impl BibleApp {
         }
     }
 }
-pub fn draw_hover_button(
-    ui: &mut egui::Ui,
-    text: &str,
-    size: egui::Vec2,
-		colors: &ThemeColors,
-) -> egui::Response {
-    // 分配按钮矩形，处理点击、悬停
-	let (id, rect) = ui.allocate_space(size); // 返回 (Id, Rect)
-	let response = ui.interact(rect, id, egui::Sense::click()); // Response
-
-    // 绘制背景
-    let fill = if response.hovered() { colors.menu_button_hover } else { colors.item_bg };
-    ui.painter().rect_filled(rect, egui::Rounding::same(4.0), fill);
-
-    // 绘制文字（居中）
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        text,
-        egui::TextStyle::Button.resolve(&ui.style()),
-        colors.text_color,
-    );
-
-    // 返回 Response，方便判断点击
-    response
-}
 
 ///右侧顶栏
 impl BibleApp {
@@ -711,7 +688,8 @@ impl BibleApp {
 					if self.search_query != self.last_search_query {
 						self.show_search_window = false;
 						self.search_results.clear();
-						self.highlight_query = None;
+						//self.highlight_query = None;
+						self.show_highlight = false; 
 					}
 
 					// 光标聚焦且关键词没变  显示上次结果
@@ -765,7 +743,7 @@ impl BibleApp {
 
 ///搜索结果栏目
 impl BibleApp {
-	fn ui_search_window(&mut self, ctx: &egui::Context) {
+	fn ui_search_window(&mut self, ctx: &egui::Context, colors: &ThemeColors,) {
 		if !self.show_search_window || self.search_results.is_empty() {
 			return;
 		}
@@ -786,12 +764,11 @@ impl BibleApp {
 					ui.horizontal(|ui| {
 						// 左侧：清除按钮
 						if ui.add(
-							egui::Button::new(egui::RichText::new("清除").size(14.0))
-							.frame(true) // 保留按钮边框，可选
+							egui::Button::new(egui::RichText::new("清除").size(14.0)).frame(true) 
 						).clicked() {
 							self.search_results.clear();
 							self.search_query.clear();
-							//self.show_search_window = false; 
+							self.show_highlight = false; 
 						}
 
 						// 中间：标题文字
@@ -801,8 +778,7 @@ impl BibleApp {
 
 						// 右侧：关闭按钮
 						if ui.add(
-							egui::Button::new(egui::RichText::new("❌").size(14.0))
-							.frame(true)
+							egui::Button::new(egui::RichText::new("❌").size(14.0)).frame(true)
 						).clicked() {
 							close = true;
 						}
@@ -825,7 +801,10 @@ impl BibleApp {
 						);
 
 						// 追加正文高亮
-						highlight_search_terms(&snippet, &self.search_query, ui.visuals().text_color(), &mut job);
+						highlight_search_terms(&snippet, 
+							&self.search_query, 
+							colors,
+							&mut job);
 
 						// 用 Button 显示
 						if ui.add(egui::Button::new(job)).clicked() {
@@ -845,6 +824,7 @@ impl BibleApp {
 				self.current_chapter = Some(ch_num.to_string());
 				self.content = content;
 				self.highlight_query = Some(self.search_query.clone());
+				self.show_highlight = true; 
 			} else {
 				self.on_chapter_selected(book, ch_num.to_string());
 			}
@@ -863,24 +843,20 @@ impl BibleApp {
 			egui::ScrollArea::vertical().show(ui, |ui| {
 
 				let theme_colors = apply_theme(ctx, &self.theme);
-				let mut text_response = if self.show_notes {
-					readonly_text_with_comments(
-						ui,
-						&self.content, 
-						&self.current_version,
-						self.current_book, 
-						self.current_chapter.clone(),
-						&mut self.open_note,
-						&theme_colors,
+
+				let mut text_response = if self.show_highlight {
+					if let Some(query) = self.highlight_query.as_deref() {
+						readonly_content_text_highlighted(
+							ui,
+							&self.content,
+							&theme_colors,
+							Some(query),
 						)
-				} else if let Some(query) = self.highlight_query.as_deref() {
-					readonly_content_text_highlighted(
-						ui,
-						&self.content,
-						Some(query),
-					)
+					} else {
+						readonly_multiline_text(ui, &self.content)
+					}
 				} else {
-					readonly_multiline_text(ui, &self.content)
+					self.readonly_text_with_notes(ui, &theme_colors)
 				};
 
 				self.show_right_click_menu(&mut text_response);
@@ -919,6 +895,7 @@ impl BibleApp {
 
             if ui.button("💬 显示笔记").clicked() { 
                 self.show_notes = true;
+								self.show_highlight = false; 
                 ui.close_menu();
             }
 
@@ -938,6 +915,7 @@ impl BibleApp {
 			self.last_search_query.clear();
 			self.text_cache.clear();
 			self.highlight_query = None;
+			self.show_highlight = false; 
 
 			let old_book = self.current_book;
 			let old_chapter = self.current_chapter.clone();
@@ -1115,7 +1093,7 @@ impl eframe::App for BibleApp {
 			self.ui_top_toolbar(ui, &colors);
 			ui.separator();
 			// 搜索窗口
-			self.ui_search_window(ctx);
+			self.ui_search_window(ctx, &colors);
 
 			// 正文内容
 			self.ui_content_panel(ctx, ui);

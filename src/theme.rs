@@ -21,6 +21,8 @@ pub struct ThemeColors {
 	pub item_text: egui::Color32,         
 	pub selected_text_color: egui::Color32,         
 	pub link_color: egui::Color32,         
+	pub search_hl_bg: egui::Color32,         
+	pub search_hl_fg: egui::Color32,         
 }
 
 pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
@@ -53,6 +55,8 @@ pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
 				item_text: egui::Color32::from_rgb(220, 220, 220),
 				selected_text_color: egui::Color32::from_rgb(220, 220, 220),
 				link_color: egui::Color32::from_rgb(0, 191, 255),
+				search_hl_bg: egui::Color32::from_rgb(255, 215, 0),
+				search_hl_fg: egui::Color32::BLACK,
 			}
 		}
 		Theme::Light => {
@@ -96,6 +100,8 @@ pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
 				item_text: egui::Color32::BLACK,
 				selected_text_color: egui::Color32::from_rgb(220, 220, 220),
 				link_color: egui::Color32::from_rgb(0, 128, 128),
+				search_hl_bg: egui::Color32::from_rgb(255, 215, 0),
+				search_hl_fg: egui::Color32::BLACK,
 			}
 		}
 	}

@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use std::path::Path;
 use std::cmp::Ordering;
+use crate::theme::ThemeColors;
 
 
 /// 从 SQLite 数据库加载书卷
@@ -131,6 +132,7 @@ pub fn sort_versions_chinese_first(versions: &mut Vec<String>) {
 pub fn readonly_content_text_highlighted(
 	ui: &mut egui::Ui,
 	text: &str,
+	colors: &ThemeColors,
 	highlight: Option<&str>,
 ) -> egui::Response {
 	let response = ui
@@ -149,7 +151,7 @@ pub fn readonly_content_text_highlighted(
 							highlight_search_terms(
 								text,
 								query,
-								ui.visuals().text_color(),
+								colors,
 								&mut job,
 							);
 						}
@@ -158,7 +160,7 @@ pub fn readonly_content_text_highlighted(
 								text,
 								0.0,
 								egui::TextFormat {
-									color: ui.visuals().text_color(),
+									color: colors.text_color,
 									..Default::default()
 								},
 							);
@@ -174,7 +176,8 @@ pub fn readonly_content_text_highlighted(
 				.inner
 			},
 			)
-				.response;
+				//.response;
+				.inner;
 
 	response
 }
@@ -182,7 +185,7 @@ pub fn readonly_content_text_highlighted(
 pub fn highlight_search_terms(
     text: &str,
     search_terms: &str,
-    normal_color: egui::Color32,
+		colors: &ThemeColors,
     job: &mut egui::text::LayoutJob, 
 ) {
     let mut last_index = 0;
@@ -200,7 +203,7 @@ pub fn highlight_search_terms(
                 &text[last_index..match_start],
                 0.0,
                 egui::TextFormat {
-                    color: normal_color,
+                    color: colors.text_color,
                     ..Default::default()
                 },
             );
@@ -211,8 +214,8 @@ pub fn highlight_search_terms(
             &text[match_start..match_end],
             0.0,
             egui::TextFormat {
-								color: egui::Color32::BLACK,            
-								background: egui::Color32::from_rgb(255, 215, 0),
+								color: colors.search_hl_fg,            
+								background: colors.search_hl_bg,
                 ..Default::default()
             },
         );
@@ -227,7 +230,7 @@ pub fn highlight_search_terms(
             &text[last_index..],
             0.0,
             egui::TextFormat {
-                color: normal_color,
+                color: colors.text_color,
                 ..Default::default()
             },
         );
@@ -266,6 +269,34 @@ pub fn book_number_to_abbr(number: i32) -> &'static str {
     } else {
         "未知"
     }
+}
+
+
+pub fn draw_hover_button(
+    ui: &mut egui::Ui,
+    text: &str,
+    size: egui::Vec2,
+		colors: &ThemeColors,
+) -> egui::Response {
+    // 分配按钮矩形，处理点击、悬停
+	let (id, rect) = ui.allocate_space(size); // 返回 (Id, Rect)
+	let response = ui.interact(rect, id, egui::Sense::click()); // Response
+
+    // 绘制背景
+    let fill = if response.hovered() { colors.menu_button_hover } else { colors.item_bg };
+    ui.painter().rect_filled(rect, egui::Rounding::same(4.0), fill);
+
+    // 绘制文字（居中）
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::TextStyle::Button.resolve(&ui.style()),
+        colors.text_color,
+    );
+
+    // 返回 Response，方便判断点击
+    response
 }
 
 
