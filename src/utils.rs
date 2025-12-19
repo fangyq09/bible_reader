@@ -84,10 +84,6 @@ pub fn chapter_display_name(chap: &str) -> String {
 }
 
 /// 版本显示名
-//pub fn version_display_name(version: &str) -> &str {
-//	version.trim_end_matches(".sqlite3").trim_end_matches(".db")
-//}
-
 pub fn version_display_name(version: &str) -> String {
     version.trim_end_matches(".sqlite3").trim_end_matches(".db").to_string()
 }
@@ -145,6 +141,7 @@ pub fn readonly_content_text_highlighted(
 					ui.set_width(ui.available_width() - 12.0);
 
 					let mut job = egui::text::LayoutJob::default();
+					let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
 
 					match highlight {
 						Some(query) if !query.is_empty() => {
@@ -153,6 +150,7 @@ pub fn readonly_content_text_highlighted(
 								query,
 								colors,
 								&mut job,
+								&body_font_id,
 							);
 						}
 						_ => {
@@ -160,6 +158,7 @@ pub fn readonly_content_text_highlighted(
 								text,
 								0.0,
 								egui::TextFormat {
+									font_id: body_font_id,
 									color: colors.text_color,
 									..Default::default()
 								},
@@ -176,7 +175,6 @@ pub fn readonly_content_text_highlighted(
 				.inner
 			},
 			)
-				//.response;
 				.inner;
 
 	response
@@ -187,6 +185,7 @@ pub fn highlight_search_terms(
     search_terms: &str,
 		colors: &ThemeColors,
     job: &mut egui::text::LayoutJob, 
+		font_id: &egui::FontId,
 ) {
     let mut last_index = 0;
     let lower_text = text.to_lowercase();
@@ -203,6 +202,7 @@ pub fn highlight_search_terms(
                 &text[last_index..match_start],
                 0.0,
                 egui::TextFormat {
+									font_id: font_id.clone(),
                     color: colors.text_color,
                     ..Default::default()
                 },
@@ -214,6 +214,7 @@ pub fn highlight_search_terms(
             &text[match_start..match_end],
             0.0,
             egui::TextFormat {
+									font_id: font_id.clone(),
 								color: colors.search_hl_fg,            
 								background: colors.search_hl_bg,
                 ..Default::default()
@@ -230,27 +231,28 @@ pub fn highlight_search_terms(
             &text[last_index..],
             0.0,
             egui::TextFormat {
+							font_id: font_id.clone(),
                 color: colors.text_color,
                 ..Default::default()
             },
         );
     }
 }
-pub fn readonly_multiline_text(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
-    let mut mutable_content = text.to_owned();
-
-    let text_edit = egui::TextEdit::multiline(&mut mutable_content)
-        .desired_width(ui.available_width() - 12.0)
-        .frame(false)
-        .interactive(true) 
-        .clip_text(false)
-				.font(body_font_id);
-
-    let response = ui.add(text_edit);
-    
-    response
-}
+//pub fn readonly_multiline_text(ui: &mut egui::Ui, text: &str) -> egui::Response {
+//    let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
+//    let mut mutable_content = text.to_owned();
+//
+//    let text_edit = egui::TextEdit::multiline(&mut mutable_content)
+//        .desired_width(ui.available_width() - 12.0)
+//        .frame(false)
+//        .interactive(true) 
+//        .clip_text(false)
+//				.font(body_font_id);
+//
+//    let response = ui.add(text_edit);
+//    
+//    response
+//}
 
 pub fn book_number_to_abbr(number: i32) -> &'static str {
     // 圣经 66 卷的缩写，按常见顺序排列
