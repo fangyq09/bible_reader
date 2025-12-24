@@ -22,74 +22,125 @@ pub struct Notedb {
     pub updated_at: Option<String>,
 }
 
+#[derive(Debug)]
+enum SearchMode {
+    Default,
+    Title,
+    Content,
+    Keyword,
+		Subject,
+}
+
+#[derive(Debug)]
+struct SearchTerm {
+    mode: SearchMode,
+    text: String,
+}
+
+#[derive(Debug)]
+struct SearchQuery {
+    terms: Vec<SearchTerm>,
+}
+
+#[derive(PartialEq, Clone, Copy)] 
+pub enum DisplayMode {
+    Editable,
+    ReadOnly,
+}
+
 //圣经章节显示
 impl BibleApp {
-pub fn readonly_text_with_notes(
-	&mut self,
-	ui: &mut eframe::egui::Ui,
-	theme_colors: &ThemeColors,
-) -> eframe::egui::Response {
-	let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
-	let mut mutable_content = self.content.clone();
+	pub fn display_text_with_notes(
+		&mut self,
+		ui: &mut eframe::egui::Ui,
+		theme_colors: &ThemeColors,
+		mode: DisplayMode,
+	) -> eframe::egui::Response {
+		let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
 
-	let text_edit = egui::TextEdit::multiline(&mut mutable_content)
-		.desired_width(ui.available_width() - 12.0)
-		.frame(false)
-		.interactive(true) 
-		.clip_text(false)
-		.font(body_font_id);
-
-	let response = ui.add(text_edit);
-	if self.show_notes {
-		self.show_appended_notes(ui,theme_colors);
+		//let mut content_clone = self.content.clone(); //然后将&content_clone传入multiline
+		let response = match mode {
+			DisplayMode::Editable => {
+				egui::ScrollArea::vertical()
+					.id_source("editable_content") 
+					.show(ui, |ui| {
+						let text_edit = egui::TextEdit::multiline(&mut self.content)
+							.desired_width(ui.available_width() - 12.0)
+							.frame(false)
+							.interactive(true) 
+							.clip_text(false)
+							.font(body_font_id);
+						ui.add(text_edit)
+					}).inner
+			}
+			DisplayMode::ReadOnly => {
+				egui::ScrollArea::vertical()
+					.id_source("readonly_content") 
+					.auto_shrink([false; 2])
+					.show(ui, |ui| {
+						ui.set_width(ui.available_width() - 12.0);
+						ui.add(
+							egui::Label::new(egui::RichText::new(&self.content).font(body_font_id.clone()))
+							.wrap()
+						)
+					}).inner
+			}
+		};
+		if self.show_notes {
+			self.get_appended_notes();
+			self.show_appended_notes(ui, theme_colors);
+		}
+		response
 	}
-
-	response
-}
 }
 
 //追加笔记样式
 impl BibleApp {
 fn show_appended_notes(
-	&mut self,
-	ui: &mut eframe::egui::Ui,
-	theme_colors: &ThemeColors,
+    &mut self,
+    ui: &mut eframe::egui::Ui,
+    theme_colors: &ThemeColors,
 ) {
-	let appended_notes = self.load_notes("notes", "append");
+    if self.appended_notes_current.is_empty() {
+        return;
+    }
 
-	if appended_notes.is_empty() {
-		return;
-	}
+    ui.add_space(10.0);
+    ui.separator();
 
-	ui.add_space(10.0);
-	ui.separator();
-	ui.add_space(8.0);
+    for i in 0..self.appended_notes_current.len() {
+			let note = &self.appended_notes_current[i];
+        ui.horizontal(|ui| {
+            ui.label("📝");
+						let title = note.title.as_deref().unwrap_or("<无标题>");
+						let subject = note.subject.as_deref().unwrap_or("");
+						let reference = note.reference.as_deref().unwrap_or("");
 
-	for note in appended_notes {
-		ui.horizontal(|ui| {
-			ui.label("📝");
+						let display_text = if !reference.is_empty() {
+							format!("【{}】「{}」 （{}）", subject, title, reference)
+						} else {
+							format!("【{}】「{}」", subject, title)
+						};
+            if hover_link(ui, &display_text, &theme_colors) {
+                self.current_note = Some(self.appended_notes_current[i].clone());
+                self.note_window_open = true;
+            }
+        });
+    }
+}
+}
 
-			let title = note.title.as_deref().unwrap_or("<无标题>");
-			let subject = note.subject.as_deref().unwrap_or("");
+impl BibleApp {
+fn get_appended_notes(&mut self){
+    let book_num = match self.current_book { Some(b) => b, None => return };
+    let chapter = match &self.current_chapter { Some(c) => c.clone(), None => return };
 
-			let display_text = if let Some(reference) = note.reference.as_deref() {
-				if !reference.is_empty() {
-					format!("【{}】「{}」 （{}）", subject, title, reference)
-				} else {
-					format!("【{}】「{}」", subject, title)
-				}
-			} else {
-				format!("【{}】「{}」", subject, title)
-			};
+    let current_key = (book_num, chapter.clone());
 
-			if hover_link(ui, &display_text, &theme_colors) {
-				self.current_note = Some(note.clone());
-				self.note_window_open = true;
-			}
-		});
-
-		ui.add_space(5.0);
-	}
+    if self.last_appended_notes_chapter != Some(current_key.clone()) {
+        self.appended_notes_current = self.load_notes("notes", "append");
+        self.last_appended_notes_chapter = Some(current_key);
+    }
 }
 }
 
@@ -296,17 +347,34 @@ impl BibleApp {
 
         let mut close_window = false;
 				let mut open_note = false;
+				let mut do_search = false; 
 
         egui::Window::new(egui::RichText::new("📒 笔记列表").size(14.0))
             .open(&mut self.show_notes_list_window)
             .resizable(true)
             .default_width(500.0)
             .show(ctx, |ui| {
-							ui.add(
+							let response = ui.add(
 								egui::TextEdit::singleline(&mut self.notes_search_keyword)
-								.hint_text(egui::RichText::new("搜索笔记").color(colors.comment_text_color).size(14.0))
+								.hint_text(
+									egui::RichText::new("搜索笔记")
+									.color(colors.comment_text_color)
+									.size(14.0),
+								)
 								.desired_width(f32::INFINITY),
 							);
+
+							if response.clicked() || response.gained_focus() || response.has_focus(){
+								self.active_search_type = "notes".to_string();
+							}
+							if response.clicked_elsewhere() {
+								self.active_search_type = "".to_string();
+							}
+
+							if ui.input(|i| i.key_pressed(egui::Key::Enter))&& self.active_search_type == "notes"
+							{
+								do_search = true;
+							}
 
 							ui.separator();
 
@@ -333,8 +401,14 @@ impl BibleApp {
 				if open_note {
 					self.note_window_open = true; 
 				}
+
+				if do_search {
+					let query = parse_search_input(&self.notes_search_keyword);
+					self.notes_cache = self.search_notes_from_db("notes", &query);
+				}
     }
 }
+
 
 //保存笔记
 pub fn save_note(category: &str, note: &Notedb) {
@@ -614,3 +688,160 @@ fn table_exists(conn: &rusqlite::Connection, table: &str) -> bool {
     conn.query_row(sql, [table], |_| Ok(()))
         .is_ok()
 }
+
+//搜索笔记
+fn parse_search_input(input: &str) -> SearchQuery {
+    let mut terms = Vec::new();
+
+    for part in input.split(['；', ';', '，', ',']) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+
+        if let Some((prefix, rest)) = part.split_once([':', '：']) {
+            let text = rest.trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+
+            let mode = match prefix.trim().to_lowercase().as_str() {
+                "title" | "标题" => SearchMode::Title,
+                "content" | "内容" | "" => SearchMode::Content,
+                "keyword" | "keywords" | "关键词" => SearchMode::Keyword,
+								"subject" | "主题" => SearchMode::Subject,
+                _ => SearchMode::Default,
+            };
+
+            terms.push(SearchTerm { mode, text });
+        } else {
+            // 没有前缀，走默认搜索
+            terms.push(SearchTerm {
+                mode: SearchMode::Default,
+                text: part.to_string(),
+            });
+        }
+    }
+
+    SearchQuery { terms }
+}
+
+impl BibleApp {
+ fn search_notes_from_db(
+    &self,
+    category: &str,
+    query: &SearchQuery,
+) -> Vec<Notedb> {
+    let mut notes = Vec::new();
+
+    if query.terms.is_empty() {
+			let notes = self.load_notes("notes", "all");
+        return notes;
+    }
+
+    let notes_dir = match dirs::data_dir() {
+        Some(d) => d.join("bible_reader/notes"),
+        None => return notes,
+    };
+    let db_path = notes_dir.join("note.db");
+
+    let conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(_) => return notes,
+    };
+
+    if !table_exists(&conn, category) {
+        return notes;
+    }
+
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<String> = Vec::new();
+
+    for term in &query.terms {
+        let text = term.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+
+        let pat = format!("%{}%", text);
+
+        match term.mode {
+            SearchMode::Title => {
+                clauses.push("title LIKE ?".to_string());
+                params.push(pat);
+            }
+            SearchMode::Content => {
+                clauses.push("body LIKE ?".to_string());
+                params.push(pat);
+            }
+            SearchMode::Keyword => {
+                clauses.push("keywords LIKE ?".to_string());
+                params.push(pat);
+            }
+						SearchMode::Subject => {
+							clauses.push("subject LIKE ?".to_string());
+							params.push(pat);
+						}
+            SearchMode::Default => {
+                clauses.push("(title LIKE ? OR keywords LIKE ?)".to_string());
+                params.push(pat.clone());
+                params.push(pat);
+            }
+        }
+    }
+
+    if clauses.is_empty() {
+        return notes;
+    }
+
+    let where_clause = clauses.join(" AND ");
+
+    let sql = format!(
+        "SELECT
+            id, book_num, book_name, chapter, verse_start, char_offset,
+            title, keywords, reference, body, subject, version,
+            created_at, updated_at
+         FROM {}
+         WHERE {}
+         ORDER BY COALESCE(updated_at, created_at) DESC;",
+        category,
+        where_clause
+    );
+
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return notes,
+    };
+
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(params.iter()),
+        |row| {
+            Ok(Notedb {
+                id: row.get(0)?,
+                book_num: row.get(1)?,
+                book_name: row.get(2)?,
+                chapter: row.get(3)?,
+                verse_start: row.get(4)?,
+                char_offset: row.get(5)?,
+                title: row.get(6)?,
+                keywords: row.get(7)?,
+                reference: row.get(8)?,
+                body: row.get(9)?,
+                subject: row.get(10)?,
+                version: row.get(11)?,
+                created_at: row.get(12)?,
+                updated_at: row.get(13)?,
+            })
+        },
+    );
+
+    if let Ok(iter) = rows {
+        for note in iter.flatten() {
+            notes.push(note);
+        }
+    }
+
+    notes
+}
+}
+
