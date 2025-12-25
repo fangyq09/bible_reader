@@ -125,60 +125,60 @@ pub fn sort_versions_chinese_first(versions: &mut Vec<String>) {
 //	response
 //}
 
-pub fn readonly_content_text_highlighted(
-	ui: &mut egui::Ui,
-	text: &str,
-	colors: &ThemeColors,
-	highlight: Option<&str>,
-) -> egui::Response {
-	let response = ui
-		.with_layout(
-			egui::Layout::top_down_justified(egui::Align::LEFT),
-			|ui| {
-				ui.set_width(ui.available_width());
-
-				ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-					ui.set_width(ui.available_width() - 12.0);
-
-					let mut job = egui::text::LayoutJob::default();
-					let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
-
-					match highlight {
-						Some(query) if !query.is_empty() => {
-							highlight_search_terms(
-								text,
-								query,
-								colors,
-								&mut job,
-								&body_font_id,
-							);
-						}
-						_ => {
-							job.append(
-								text,
-								0.0,
-								egui::TextFormat {
-									font_id: body_font_id,
-									color: colors.text_color,
-									..Default::default()
-								},
-							);
-						}
-					}
-
-					ui.add(
-						egui::Label::new(job)
-						.sense(egui::Sense::click())
-						.selectable(true),
-					)
-				})
-				.inner
-			},
-			)
-				.inner;
-
-	response
-}
+//pub fn readonly_content_text_highlighted(
+//	ui: &mut egui::Ui,
+//	text: &str,
+//	colors: &ThemeColors,
+//	highlight: Option<&str>,
+//) -> egui::Response {
+//	let response = ui
+//		.with_layout(
+//			egui::Layout::top_down_justified(egui::Align::LEFT),
+//			|ui| {
+//				ui.set_width(ui.available_width());
+//
+//				ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+//					ui.set_width(ui.available_width() - 12.0);
+//
+//					let mut job = egui::text::LayoutJob::default();
+//					let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
+//
+//					match highlight {
+//						Some(query) if !query.is_empty() => {
+//							highlight_search_terms(
+//								text,
+//								query,
+//								colors,
+//								&mut job,
+//								&body_font_id,
+//							);
+//						}
+//						_ => {
+//							job.append(
+//								text,
+//								0.0,
+//								egui::TextFormat {
+//									font_id: body_font_id,
+//									color: colors.text_color,
+//									..Default::default()
+//								},
+//							);
+//						}
+//					}
+//
+//					ui.add(
+//						egui::Label::new(job)
+//						.sense(egui::Sense::click())
+//						.selectable(true),
+//					)
+//				})
+//				.inner
+//			},
+//			)
+//				.inner;
+//
+//	response
+//}
 
 pub fn highlight_search_terms(
     text: &str,
@@ -286,7 +286,7 @@ pub fn draw_hover_button(
 
     // 绘制背景
     let fill = if response.hovered() { colors.menu_button_hover } else { colors.item_bg };
-    ui.painter().rect_filled(rect, egui::Rounding::same(4.0), fill);
+    ui.painter().rect_filled(rect, egui::CornerRadius::same(4), fill);
 
     // 绘制文字（居中）
     ui.painter().text(

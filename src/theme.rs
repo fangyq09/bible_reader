@@ -20,7 +20,7 @@ pub struct ThemeColors {
 	pub item_bg: egui::Color32,         
 	pub item_text: egui::Color32,         
 	pub selected_text_color: egui::Color32,         
-	pub link_color: egui::Color32,         
+	//pub link_color: egui::Color32,         
 	pub search_hl_bg: egui::Color32,         
 	pub search_hl_fg: egui::Color32,         
 }
@@ -47,14 +47,15 @@ pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
 				chapter_unselected_bg: visuals.widgets.inactive.bg_fill,
 				text_color: egui::Color32::from_rgb(220, 220, 220),
 				menu_button_bg: visuals.widgets.inactive.bg_fill,    
-				menu_button_hover: egui::Color32::from_rgb(24, 7, 46),
+				//menu_button_hover: egui::Color32::from_rgb(24, 7, 46),
+				menu_button_hover: egui::Color32::from_rgb(177, 86, 18),
 				menu_button_active: visuals.widgets.active.bg_fill,
-				menu_stroke: egui::Color32::from_rgb(58,140,255),
+				menu_stroke: egui::Color32::from_rgb(129,71,27),
 				comment_text_color: egui::Color32::from_rgb(150, 150, 150),
 				item_bg: visuals.selection.bg_fill,
 				item_text: egui::Color32::from_rgb(220, 220, 220),
 				selected_text_color: egui::Color32::from_rgb(220, 220, 220),
-				link_color: egui::Color32::from_rgb(0, 191, 255),
+				//link_color: egui::Color32::from_rgb(0, 191, 255),
 				search_hl_bg: egui::Color32::from_rgb(255, 215, 0),
 				search_hl_fg: egui::Color32::BLACK,
 			}
@@ -63,8 +64,7 @@ pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
 			let mut visuals = egui::Visuals::light();
 			visuals.panel_fill = egui::Color32::from_rgb(242, 235, 217);
 			visuals.override_text_color = Some(egui::Color32::BLACK);
-			//visuals.selection.bg_fill = egui::Color32::from_rgb(71, 78, 86);
-			visuals.selection.bg_fill = egui::Color32::from_rgb(41, 134, 204);
+			visuals.selection.bg_fill = egui::Color32::from_rgb(148, 214, 255);
 
 			visuals.hyperlink_color = egui::Color32::from_rgb(0, 128, 128); 
 
@@ -99,7 +99,7 @@ pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
 				item_bg: egui::Color32::from_rgb(180, 200, 220),
 				item_text: egui::Color32::BLACK,
 				selected_text_color: egui::Color32::from_rgb(220, 220, 220),
-				link_color: egui::Color32::from_rgb(0, 128, 128),
+				//link_color: egui::Color32::from_rgb(0, 128, 128),
 				search_hl_bg: egui::Color32::from_rgb(255, 215, 0),
 				search_hl_fg: egui::Color32::BLACK,
 			}

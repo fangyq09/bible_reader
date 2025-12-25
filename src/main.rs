@@ -24,11 +24,10 @@ use crate::utils::{
 	version_display_name,
 	sort_versions_chinese_first,
 	book_number_to_abbr,
-	readonly_content_text_highlighted,
 	highlight_search_terms,
 	draw_hover_button,
 };
-use crate::notes::{Notedb,DisplayMode};
+use crate::notes::{Notedb};
 use crate::note_app::NoteApp;
 
 /// 应用状态
@@ -57,7 +56,7 @@ struct BibleApp {
 	show_settings_menu: bool,
 	show_highlight: bool,
 	pub show_notes: bool,
-	pub last_appended_notes_chapter: Option<(i32, String)>,
+	pub last_appended_notes_chapter: Option<(String, i32, String)>,
 	pub appended_notes_current: Vec<Notedb>,
 	pub show_notes_list_window: bool,
 	pub notes_cache: Vec<Notedb>,
@@ -66,6 +65,8 @@ struct BibleApp {
 	pub notes_search_keyword: String,
 	pub active_search_type: String,
 	editable_mode: bool,
+	content_layout: Option<egui::text::LayoutJob>, 
+	last_processed_key: String,
 }
 ///中文字体
 pub fn configure_chinese_font(ctx: &egui::Context) {
@@ -109,10 +110,10 @@ impl BibleApp {
 		// ---------- 复制内置译本 ----------
 		let built_in_files: Vec<(&str, &[u8])> = vec![
 			("和合本.sqlite3", include_bytes!("../assets/sqlite/cunpss.sqlite3")),
-			//("和修本.sqlite3", include_bytes!("../assets/sqlite/rcuvss.sqlite3")),
-			//("当代译本.sqlite3", include_bytes!("../assets/sqlite/ccb.sqlite3")),
-			//("niv2011.sqlite3", include_bytes!("../assets/sqlite/niv2011.sqlite3")),
-			//("sg21.sqlite3", include_bytes!("../assets/sqlite/sg21.sqlite3")),
+			("和修本.sqlite3", include_bytes!("../assets/sqlite/rcuvss.sqlite3")),
+			("当代译本.sqlite3", include_bytes!("../assets/sqlite/ccb.sqlite3")),
+			("niv2011.sqlite3", include_bytes!("../assets/sqlite/niv2011.sqlite3")),
+			("sg21.sqlite3", include_bytes!("../assets/sqlite/sg21.sqlite3")),
 		];
 
 		for (filename, content) in built_in_files {
@@ -186,6 +187,8 @@ impl BibleApp {
 				notes_search_keyword: String::new(),
 				active_search_type: String::new(),
 				editable_mode: false,
+				content_layout: None,
+				last_processed_key: String::new(),
 			};
 
 			// 若没有任何圣经数据库，就不加载，直接返回 app
@@ -372,7 +375,8 @@ impl BibleApp {
 									colors.text_color
 								};
 
-								let txt = egui::RichText::new(chapter_display_name(chap)).color(txt_color);
+								let txt = egui::RichText::new(chapter_display_name(chap))
+									.color(txt_color);
 
 								if ui.add(egui::Button::new(txt).fill(bg)).clicked() {
 									chosen = Some(chap.clone());
@@ -429,13 +433,13 @@ impl BibleApp {
 					let popup_frame = egui::Frame {
 						fill: colors.menu_button_bg,
 						stroke: egui::Stroke::new(2.0, colors.menu_stroke),
-						rounding: egui::Rounding::same(4.0),
-						inner_margin: egui::Margin::same(4.0),
+						corner_radius: egui::CornerRadius::same(4),
+						inner_margin: egui::Margin::same(4),
 						..Default::default()
 					};
 
 					let item_height = 26.0;
-					let rounding = egui::Rounding::same(4.0);
+					let rounding = egui::CornerRadius::same(4);
 
 					popup_frame.show(ui, |ui| {
 						ui.set_min_width(100.0);
@@ -517,13 +521,13 @@ impl BibleApp {
 					let popup_frame = egui::Frame {
 						fill: colors.menu_button_bg,
 						stroke: egui::Stroke::new(2.0, colors.menu_stroke),
-						rounding: egui::Rounding::same(4.0),
-						inner_margin: egui::Margin::same(4.0),
+						corner_radius:egui::CornerRadius::same(4),
+						inner_margin: egui::Margin::same(4),
 						..Default::default()
 					};
 
 					let item_height = 26.0;
-					let rounding = egui::Rounding::same(4.0);
+					let rounding = egui::CornerRadius::same(4);
 
 					popup_frame.show(ui, |ui| {
 						ui.set_min_width(80.0);
@@ -596,8 +600,8 @@ impl BibleApp {
 					let frame = egui::Frame {
 						fill: colors.menu_button_bg,
 						stroke: egui::Stroke::new(2.0, colors.menu_stroke),
-						rounding: egui::Rounding::same(4.0),
-						inner_margin: egui::Margin::same(4.0),
+						corner_radius: egui::CornerRadius::same(4),
+						inner_margin: egui::Margin::same(4),
 						..Default::default()
 					};
 
@@ -765,9 +769,9 @@ impl BibleApp {
 ///搜索框
 impl BibleApp {
 	fn ui_search_box(&mut self, ui: &mut egui::Ui, colors: &ThemeColors) {
-		egui::Frame::none()
+		egui::Frame::new()
 			.fill(colors.menu_button_bg)        // 背景色
-			.rounding(egui::Rounding::same(4.0))
+			.corner_radius(egui::CornerRadius::same(4))
 			.show(ui, |ui| {
 				let search = ui.add(
 					egui::TextEdit::singleline(&mut self.search_query)
@@ -935,30 +939,76 @@ impl BibleApp {
 
 ///文本显示区
 impl BibleApp {
-	fn ui_content_panel(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-		egui::ScrollArea::vertical().show(ui, |ui| {
+    fn ui_content_panel(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
 
-			let theme_colors = apply_theme(ctx, &self.theme);
+        let current_key = format!(
+            "{:?}-{:?}-{:?}-{:?}-{:?}-{}", 
+            self.current_version,
+            self.current_book,
+            self.current_chapter,
+            self.highlight_query, 
+            self.theme,
+            self.show_highlight   
+        );
 
-			let mut text_response = if self.show_highlight {
-				readonly_content_text_highlighted(
-					ui,
-					&self.content,
-					&theme_colors,
-					self.highlight_query.as_deref(),
-				)
-			} else {
-				if self.editable_mode{
-					self.display_text_with_notes(ui, &theme_colors, DisplayMode::Editable)
-				} else {
-					self.display_text_with_notes(ui, &theme_colors, DisplayMode::ReadOnly)
+				if self.content_layout.is_none() || self.last_processed_key != current_key {
+					let theme_colors = apply_theme(ctx, &self.theme);
+					self.content_layout = Some(self.prepare_content_layout(ui, &theme_colors));
+					self.last_processed_key = current_key;
 				}
-			};
 
-			self.show_right_click_menu(&mut text_response);
+				//let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
+        egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+            if self.editable_mode {
+							let text_edit = egui::TextEdit::multiline(&mut self.content)
+								.desired_width(ui.available_width() - 12.0)
+								.frame(false)
+								.interactive(true) 
+								.clip_text(false);
+								//.font(body_font_id);
+							ui.add(text_edit);
+            } else {
+                if let Some(layout) = &self.content_layout {
+									ui.set_width(ui.available_width() - 12.0);
+                    let mut text_response = ui.add(
+                        egui::Label::new(layout.clone())
+                            .sense(egui::Sense::click())
+                            .selectable(true),
+                    );
+                    self.show_right_click_menu(&mut text_response);
+                }
+            }
+						if self.show_notes {
+							self.get_appended_notes();
+							self.show_appended_notes(ui);
+						}
+        });
+    }
 
-		});
-	}
+    fn prepare_content_layout(&self, ui: &egui::Ui, colors: &ThemeColors) -> egui::text::LayoutJob {
+        let mut job = egui::text::LayoutJob::default();
+        let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
+
+        if self.show_highlight {
+            if let Some(query) = self.highlight_query.as_deref() {
+                if !query.is_empty() {
+                    highlight_search_terms(&self.content, query, colors, &mut job, &body_font_id);
+                    return job; 
+                }
+            }
+        }
+
+        job.append(
+            &self.content,
+            0.0,
+            egui::TextFormat {
+                font_id: body_font_id,
+                color: colors.text_color,
+                ..Default::default()
+            },
+        );
+        job
+    }
 }
 
 ///右键菜单
@@ -967,18 +1017,18 @@ impl BibleApp {
 		response.context_menu(|ui| {
 			if ui.button("➕ 添加笔记").clicked() { 
 				self.open_noteapp_window(None);
-				ui.close_menu();
+				ui.close_kind(egui::UiKind::Menu)
 			}
 
 			if ui.button("💬 显示笔记").clicked() { 
 				self.show_notes = true;
 				self.show_highlight = false; 
-				ui.close_menu();
+				ui.close_kind(egui::UiKind::Menu)
 			}
 
 			if ui.button("🍄 隐藏笔记").clicked() { 
 				self.show_notes = false;
-				ui.close_menu();
+				ui.close_kind(egui::UiKind::Menu)
 			}
 		});
 	}
@@ -1206,6 +1256,13 @@ impl BibleApp {
 impl eframe::App for BibleApp {
 	fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
 		let colors = apply_theme(ctx, &self.theme);
+		//ctx.input(|i| {
+		//	for e in &i.events {
+		//		if matches!(e, egui::Event::Ime(_)) {
+		//			eprintln!("{:?}", e);
+		//		}
+		//	}
+		//});
 		// 左侧 UI
 		self.ui_left_books_panel(ctx, &colors);
 		self.ui_left_chapters_panel(ctx, &colors);
@@ -1225,7 +1282,6 @@ impl eframe::App for BibleApp {
 			let empty_rect = ui.available_rect_before_wrap();
 			let mut empty_resp = ui.allocate_rect(empty_rect, egui::Sense::click());
 			self.show_right_click_menu(&mut empty_resp);
-
 		});
 
 		//show_note_window(ctx, &colors, &mut self.open_note);
@@ -1301,4 +1357,3 @@ fn main() -> eframe::Result<()> {
 		)
 	}
 }
-

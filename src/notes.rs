@@ -42,64 +42,11 @@ struct SearchQuery {
     terms: Vec<SearchTerm>,
 }
 
-#[derive(PartialEq, Clone, Copy)] 
-pub enum DisplayMode {
-    Editable,
-    ReadOnly,
-}
-
-//圣经章节显示
-impl BibleApp {
-	pub fn display_text_with_notes(
-		&mut self,
-		ui: &mut eframe::egui::Ui,
-		theme_colors: &ThemeColors,
-		mode: DisplayMode,
-	) -> eframe::egui::Response {
-		let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
-
-		//let mut content_clone = self.content.clone(); //然后将&content_clone传入multiline
-		let response = match mode {
-			DisplayMode::Editable => {
-				egui::ScrollArea::vertical()
-					.id_source("editable_content") 
-					.show(ui, |ui| {
-						let text_edit = egui::TextEdit::multiline(&mut self.content)
-							.desired_width(ui.available_width() - 12.0)
-							.frame(false)
-							.interactive(true) 
-							.clip_text(false)
-							.font(body_font_id);
-						ui.add(text_edit)
-					}).inner
-			}
-			DisplayMode::ReadOnly => {
-				egui::ScrollArea::vertical()
-					.id_source("readonly_content") 
-					.auto_shrink([false; 2])
-					.show(ui, |ui| {
-						ui.set_width(ui.available_width() - 12.0);
-						ui.add(
-							egui::Label::new(egui::RichText::new(&self.content).font(body_font_id.clone()))
-							.wrap()
-						)
-					}).inner
-			}
-		};
-		if self.show_notes {
-			self.get_appended_notes();
-			self.show_appended_notes(ui, theme_colors);
-		}
-		response
-	}
-}
-
 //追加笔记样式
 impl BibleApp {
-fn show_appended_notes(
+pub fn show_appended_notes(
     &mut self,
     ui: &mut eframe::egui::Ui,
-    theme_colors: &ThemeColors,
 ) {
     if self.appended_notes_current.is_empty() {
         return;
@@ -121,7 +68,7 @@ fn show_appended_notes(
 						} else {
 							format!("【{}】「{}」", subject, title)
 						};
-            if hover_link(ui, &display_text, &theme_colors) {
+            if ui.link(&display_text).clicked(){
                 self.current_note = Some(self.appended_notes_current[i].clone());
                 self.note_window_open = true;
             }
@@ -131,43 +78,18 @@ fn show_appended_notes(
 }
 
 impl BibleApp {
-fn get_appended_notes(&mut self){
+pub fn get_appended_notes(&mut self){
     let book_num = match self.current_book { Some(b) => b, None => return };
     let chapter = match &self.current_chapter { Some(c) => c.clone(), None => return };
+		let version = self.current_version.clone();
 
-    let current_key = (book_num, chapter.clone());
+    let current_key = (version, book_num, chapter.clone());
 
     if self.last_appended_notes_chapter != Some(current_key.clone()) {
         self.appended_notes_current = self.load_notes("notes", "append");
         self.last_appended_notes_chapter = Some(current_key);
     }
 }
-}
-
-//自制的link样式
-pub fn hover_link(ui: &mut egui::Ui, text: &str, colors: &ThemeColors) -> bool {
-    // 创建 RichText
-    let rich_text = egui::RichText::new(text).color(colors.link_color);
-
-    // 添加 Label 并允许点击
-    let label = egui::Label::new(rich_text).truncate().sense(egui::Sense::click());
-    let response = ui.add(label);
-
-    // 悬停时显示下划线，并改变鼠标光标
-    if response.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-				let rect = response.rect;
-				let font_id = ui.style().text_styles.get(&egui::TextStyle::Body).unwrap().clone();
-				let text_height = ui.fonts(|f| f.row_height(&font_id));
-				let y = rect.bottom() - text_height * 0.1; // 下划线位置
-				let start = egui::Pos2 { x: rect.left(), y };
-				let end = egui::Pos2 { x: rect.right(), y };
-				ui.painter().line_segment(
-					[start, end],
-					egui::Stroke::new(1.0, colors.link_color),
-				);
-		}
-    response.clicked()
 }
 
 //笔记阅读窗口
@@ -305,7 +227,7 @@ fn draw_notes_list(
 				//	request_close = true;
 				//}
 
-				let title_response = hover_link(ui, &title_text, &colors);
+				let title_response = ui.link(&title_text);
 
         // ===== 第二行：正文预览（单行） =====
         let _body_response = ui.add(
@@ -321,7 +243,7 @@ fn draw_notes_list(
 
         // ===== 点击任意一行都打开 =====
         //if title_response || body_response.clicked() {
-        if title_response {
+        if title_response.clicked() {
             *current_note = Some(note.clone());
             *note_window_open = true;
             request_close = true;
