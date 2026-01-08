@@ -22,7 +22,7 @@
 
 
 - 快捷键 Ctrl i / Ctrl o 可以在浏览过的历史界面之间前后转跳。
-- 搜索经文：可以直接输入关键词“XXX”进行整本圣经搜索，也可以“书卷名：XXX”这种只搜索某卷书
+- 搜索经文：可以直接输入关键词“XXX”进行整本圣经搜索，也可以“书卷名：XXX”这种只搜索某卷书，例如“创：挪亚”。
 
 
 <img width="2642" height="1746" alt="bible_reader" src="https://github.com/user-attachments/assets/45529df8-de5b-407e-a928-6b537069b8d4" />
