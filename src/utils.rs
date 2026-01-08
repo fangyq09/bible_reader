@@ -1,72 +1,65 @@
 use rusqlite::Connection;
-use std::path::Path;
+//use std::path::Path;
 use std::cmp::Ordering;
 use crate::theme::ThemeColors;
 
 
 /// 从 SQLite 数据库加载书卷
-pub fn load_books(db_path: &Path) -> Vec<(i32, String)> {
-	let conn = Connection::open(db_path).unwrap();
-	let mut stmt = conn
-		.prepare("SELECT number, human FROM books ORDER BY number")
-		.unwrap();
-	let rows = stmt
-		.query_map([], |row| {
-			let num: i32 = row.get(0)?;
-			let human: String = row.get(1)?;
-			Ok((num, human))
-		})
-	.unwrap();
-	rows.map(|r| r.unwrap()).collect()
+pub fn load_books(conn: &Connection) -> Vec<(i32, String)> {
+    let mut stmt = conn
+        .prepare("SELECT number, human FROM books ORDER BY number")
+        .unwrap();
+    let rows = stmt
+        .query_map([], |row| {
+            let num: i32 = row.get(0)?;
+            let human: String = row.get(1)?;
+            Ok((num, human))
+        })
+        .unwrap();
+    rows.map(|r| r.unwrap()).collect()
 }
 
 /// 从 SQLite 数据库加载章节列表
-pub fn load_chapters(db_path: &Path, book_number: i32) -> Vec<String> {
-	let conn = Connection::open(db_path).unwrap();
+pub fn load_chapters(conn: &Connection, book_number: i32) -> Vec<String> {
+    let osis: String = conn
+        .query_row(
+            "SELECT osis FROM books WHERE number = ?",
+            [book_number],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
 
-	let osis: String = conn
-		.query_row(
-			"SELECT osis FROM books WHERE number = ?",
-			[book_number],
-			|row| row.get(0),
-		)
-		.unwrap_or_default();
+    let mut stmt = conn
+        .prepare(
+            "SELECT reference_osis FROM chapters WHERE reference_osis LIKE ?1 || '.%' ORDER BY reference_osis",
+        )
+        .unwrap();
 
-	let mut stmt = conn
-		.prepare(
-			"SELECT reference_osis FROM chapters WHERE reference_osis LIKE ?1 || '.%' ORDER BY reference_osis"
-		)
-		.unwrap();
+    let rows = stmt.query_map([osis], |row| row.get::<_, String>(0)).unwrap();
 
-	let rows = stmt
-		.query_map([osis], |row| row.get::<_, String>(0))
-		.unwrap();
-
-	rows.map(|r| {
-		let osis_ref: String = r.unwrap();
-		osis_ref.split('.').last().unwrap_or("0").to_string()
-	}).collect()
+    rows.map(|r| r.unwrap().split('.').last().unwrap_or("0").to_string())
+        .collect()
 }
 
 /// 从 SQLite 读取章节内容
-pub fn load_chapter_content(db_path: &Path, book_number: i32, chapter: i32) -> String {
-	let conn = Connection::open(db_path).unwrap();
 
-	let osis: String = conn
-		.query_row(
-			"SELECT osis FROM books WHERE number = ?",
-			[book_number],
-			|row| row.get(0),
-		)
-		.unwrap_or_default();
+pub fn load_chapter_content(conn: &Connection, book_number: i32, chapter: i32) -> String {
+    let osis: String = conn
+        .query_row(
+            "SELECT osis FROM books WHERE number = ?",
+            [book_number],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
 
-	let reference = format!("{}.{}", osis, chapter);
+    let reference = format!("{}.{}", osis, chapter);
 
-	conn.query_row(
-		"SELECT content FROM chapters WHERE reference_osis = ?1",
-		[reference],
-		|row| row.get(0),
-	).unwrap_or_else(|_| "（未找到章节内容）".to_string())
+    conn.query_row(
+        "SELECT content FROM chapters WHERE reference_osis = ?1",
+        [reference],
+        |row| row.get(0),
+    )
+    .unwrap_or_else(|_| "（未找到章节内容）".to_string())
 }
 
 /// 章节排序辅助
@@ -273,6 +266,24 @@ pub fn book_number_to_abbr(number: i32) -> &'static str {
     }
 }
 
+pub fn book_number_to_abbr_en(number: i32) -> &'static str {
+    // 圣经 66 卷的英文缩写（按常见顺序）
+    const ABBRS: [&str; 66] = [
+        "GEN", "EXOD", "LEV", "NUM", "DEUT", "JOSH", "JUDG", "RUTH", "1SAM", "2SAM",
+        "1KGS", "2KGS", "1CHR", "2CHR", "EZRA", "NEH", "ESTH", "JOB", "PS", "PROV",
+        "ECCL", "SONG", "ISA", "JER", "LAM", "EZEK", "DAN", "HOS", "JOEL", "AMOS",
+        "OBAD", "JONAH", "MIC", "NAH", "HAB", "ZEPH", "HAG", "ZECH", "MAL",
+        "MATT", "MARK", "LUKE", "JOHN", "ACTS", "ROM", "1COR", "2COR", "GAL", "EPH",
+        "PHIL", "COL", "1THESS", "2THESS", "1TIM", "2TIM", "TITUS", "PHLM",
+        "HEB", "JAS", "1PET", "2PET", "1JOHN", "2JOHN", "3JOHN", "JUDE", "REV"
+    ];
+
+    if number >= 1 && number <= 66 {
+        ABBRS[(number - 1) as usize]
+    } else {
+        "UNK" // 未知
+    }
+}
 
 pub fn draw_hover_button(
     ui: &mut egui::Ui,

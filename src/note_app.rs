@@ -94,6 +94,7 @@ impl eframe::App for NoteApp {
 				ui.add_sized(
 					[ui.available_width(), ui.available_height()],
 					egui::TextEdit::multiline(note.body.get_or_insert(String::new()))
+					//.font(egui::FontId::proportional(16.0))
 					.hint_text("笔记正文"),
 				);
 			}); 

@@ -1,8 +1,11 @@
 use chrono::Utc;
 use serde::{Serialize, Deserialize};
-use crate::theme::ThemeColors;
+use crate::theme::{ThemeColors,font_size_tiny};
 use crate::BibleApp;
-use crate::utils::version_display_name;
+use crate::ParallelVerse;
+use crate::utils::{version_display_name,sort_versions_chinese_first,book_number_to_abbr_en};
+use std::fs;
+use rfd::FileDialog;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Notedb {
@@ -78,18 +81,29 @@ pub fn show_appended_notes(
 }
 
 impl BibleApp {
-pub fn get_appended_notes(&mut self){
-    let book_num = match self.current_book { Some(b) => b, None => return };
-    let chapter = match &self.current_chapter { Some(c) => c.clone(), None => return };
-		let version = self.current_version.clone();
+	//pub fn get_appended_notes(&mut self){
+	//    let book_num = match self.current_book { Some(b) => b, None => return };
+	//    let chapter = match &self.current_chapter { Some(c) => c.clone(), None => return };
+	//		let version = self.current_version.clone();
+	//
+	//    let current_key = (version, book_num, chapter.clone());
+	//
+	//    if self.last_appended_notes_chapter != Some(current_key.clone()) {
+	//        self.appended_notes_current = self.load_notes("notes", "append");
+	//        self.last_appended_notes_chapter = Some(current_key);
+	//    }
+	//}
+	pub fn get_appended_notes(&mut self) {
+		let current_state = match self.current_nav_state() {
+			Some(s) => s,
+			None => return,
+		};
 
-    let current_key = (version, book_num, chapter.clone());
-
-    if self.last_appended_notes_chapter != Some(current_key.clone()) {
-        self.appended_notes_current = self.load_notes("notes", "append");
-        self.last_appended_notes_chapter = Some(current_key);
-    }
-}
+		if self.last_appended_notes_state.as_ref() != Some(&current_state) {
+			self.appended_notes_current = self.load_notes("notes", "append");
+			self.last_appended_notes_state = Some(current_state);
+		}
+	}
 }
 
 //笔记阅读窗口
@@ -114,7 +128,8 @@ impl BibleApp {
 								if !reference.is_empty() {
 									ui.label(
 										egui::RichText::new(format!("引用：{}", reference))
-										.size(10.0)
+										//.size(10.0)
+                                        .text_style(font_size_tiny())
 										.color(colors.comment_text_color),
 									);
 								}
@@ -149,7 +164,8 @@ impl BibleApp {
 							if let Some(created) = &note.created_at {
 								ui.label(
 									egui::RichText::new(format!("创建: {}", created))
-									.size(10.0)
+									//.size(10.0)
+                                    .text_style(font_size_tiny())
 									.color(colors.comment_text_color)
 								);
 							}
@@ -169,7 +185,8 @@ impl BibleApp {
 							if let Some(updated) = &note.updated_at {
 								ui.label(
 									egui::RichText::new(format!("修改: {}", updated))
-									.size(10.0)
+									//.size(10.0)
+                                    .text_style(font_size_tiny())
 									.color(colors.comment_text_color)
 								);
 							}
@@ -234,12 +251,15 @@ fn draw_notes_list(
             egui::Label::new(body)
                 .truncate()   // 只显示第一行
         );
-				ui.add(
+        ui.add(
             egui::Label::new(
-							egui::RichText::new(note_location).size(10.0).color(colors.comment_text_color)
-							)
-						.truncate()  
-				);
+                egui::RichText::new(note_location)
+                //.size(10.0)
+                .text_style(font_size_tiny())
+                .color(colors.comment_text_color)
+                )
+            .truncate()  
+            );
 
         // ===== 点击任意一行都打开 =====
         //if title_response || body_response.clicked() {
@@ -281,7 +301,8 @@ impl BibleApp {
 								.hint_text(
 									egui::RichText::new("搜索笔记")
 									.color(colors.comment_text_color)
-									.size(14.0),
+                                    .text_style(egui::TextStyle::Small),
+									//.size(14.0),
 								)
 								.desired_width(f32::INFINITY),
 							);
@@ -647,7 +668,6 @@ fn parse_search_input(input: &str) -> SearchQuery {
 
     SearchQuery { terms }
 }
-
 impl BibleApp {
  fn search_notes_from_db(
     &self,
@@ -767,3 +787,165 @@ impl BibleApp {
 }
 }
 
+//导入圣经译本
+impl BibleApp {
+	pub fn import_bible_logic(&mut self) {
+		// 1. 弹出文件选择对话框
+		// 我们限定只能选择 .sqlite3 文件，这和你之前的过滤逻辑一致
+		let file = FileDialog::new()
+			.add_filter("Bible Database", &["sqlite3", "db"])
+			.set_title("选择圣经译本数据库")
+			.pick_file();
+
+		if let Some(source_path) = file {
+			// 2. 准备目标路径
+			// self.bible_root 在 new 函数中已经是 ~/.local/share/bible_reader/sqlite
+			let file_name = source_path.file_name().unwrap();
+			let target_path = self.bible_root.join(file_name);
+
+			// 3. 执行复制操作
+			match fs::copy(&source_path, &target_path) {
+				Ok(_) => {
+					println!("成功导入译本: {:?}", file_name);
+
+					// 4. 关键：导入后立即刷新译本列表，这样用户不用重启就能看到
+					self.refresh_versions();
+				}
+				Err(e) => {
+					eprintln!("导入译本失败: {}, 路径: {:?}", e, source_path);
+					// 这里以后可以加一个弹窗提示用户失败原因
+				}
+			}
+		}
+	}
+
+	// 辅助函数：重新扫描目录以更新 self.versions
+	fn refresh_versions(&mut self) {
+		if let Ok(entries) = fs::read_dir(&self.bible_root) {
+			let mut new_versions: Vec<String> = entries
+				.flatten()
+				.filter_map(|e| {
+					let path = e.path();
+					if path.extension().and_then(|s| s.to_str()) == Some("sqlite3") {
+						return Some(path.file_name().unwrap().to_string_lossy().to_string());
+					}
+					None
+				})
+			.collect();
+
+			// 保持和你 new 函数中一致的排序逻辑
+			sort_versions_chinese_first(&mut new_versions);
+			self.versions = new_versions;
+		}
+	}
+}
+
+//导入导出笔记
+impl BibleApp {
+	/// 导出笔记：将 note.db 另存为用户选择的位置
+	pub fn export_notes_logic(&mut self) {
+		// 1. 准备默认文件名，带上日期，例如: bible_notes_20231027.db
+		let date_str = chrono::Local::now().format("%Y%m%d").to_string();
+		let default_name = format!("bible_notes_{}.db", date_str);
+
+		// 2. 弹出保存对话框
+		let target_file = rfd::FileDialog::new()
+			.set_file_name(&default_name)
+			.add_filter("SQLite Database", &["db", "sqlite3"])
+			.set_title("导出笔记备份")
+			.save_file();
+
+		if let Some(dest_path) = target_file {
+			let source_path = self.bible_root.parent().unwrap().join("notes").join("note.db");
+
+			if source_path.exists() {
+				match fs::copy(&source_path, &dest_path) {
+					Ok(_) => println!("笔记已备份至: {:?}", dest_path),
+					Err(e) => eprintln!("导出失败: {}", e),
+				}
+			} else {
+				eprintln!("未找到笔记文件: {:?}", source_path);
+			}
+		}
+	}
+
+	/// 导入笔记：用备份文件替换当前的 note.db
+	pub fn import_notes_logic(&mut self) {
+		// 1. 弹出选择对话框
+		let file = rfd::FileDialog::new()
+			.add_filter("Bible Notes Backup", &["db", "sqlite3"])
+			.set_title("选择要恢复的笔记备份")
+			.pick_file();
+
+		if let Some(source_path) = file {
+			let notes_dir = self.bible_root.parent().unwrap().join("notes");
+			let target_path = notes_dir.join("note.db");
+
+			// 2. 如果当前正在显示笔记列表或编辑笔记，先关闭相关连接/缓存
+			// 如果你使用了数据库连接池或长期持有连接，这里可能需要先释放 self.notes_conn = None;
+
+			// 3. 执行覆盖操作
+			match fs::copy(&source_path, &target_path) {
+				Ok(_) => {
+					println!("笔记恢复成功！");
+					// 4. 重要：恢复后清空笔记缓存，迫使程序重新从新数据库读取
+					self.notes_cache.clear(); 
+					// 如果有打开的连接，最好在这里重新初始化
+				}
+				Err(e) => eprintln!("恢复笔记失败: {}", e),
+			}
+		}
+	}
+}
+
+
+impl BibleApp {
+	pub fn load_parallel_verses(&mut self, verse_num: i32) {
+		self.parallel_verses.clear();
+
+		let chapter: i32 = match &self.current_chapter {
+			Some(s) => match s.parse::<i32>() {
+				Ok(v) => v,
+				Err(_) => { return; }
+			},
+			None => { return; }
+		};
+
+		let book_abbr = match self.current_book {
+			Some(num) => book_number_to_abbr_en(num),
+			None => { return; }
+		};
+
+		let verse_key = chapter as f64 + verse_num as f64 / 1000.0;
+
+		// 遍历所有译本
+		for version in &self.versions {
+
+			if version == &self.current_version {
+				continue; // 跳过当前版本
+			}
+			let db_path = self.bible_root.join(version);
+
+			let conn = match rusqlite::Connection::open(&db_path) {
+				Ok(c) => c,
+				Err(_) => { continue; }
+			};
+
+			let result: rusqlite::Result<String> = conn.query_row(
+				"SELECT unformatted
+								 FROM verses
+								 WHERE TRIM(book) = ?1 COLLATE NOCASE AND ROUND(verse,3) = ?2
+								 LIMIT 1",
+								(book_abbr, verse_key),
+								|row| row.get(0),
+						);
+
+			if let Ok(text) = result {
+				self.parallel_verses.push(ParallelVerse {
+					version: version.clone(),
+					text,
+				});
+			}
+		}
+	}
+}

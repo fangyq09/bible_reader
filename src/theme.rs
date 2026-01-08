@@ -1,6 +1,6 @@
 use eframe::egui;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Theme {
 	Dark,
 	Light,
@@ -25,22 +25,52 @@ pub struct ThemeColors {
 	pub search_hl_fg: egui::Color32,         
 }
 
-pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
+pub fn apply_theme(ctx: &egui::Context, theme: &Theme) {
+    ctx.style_mut(|style| {
+        match theme {
+            Theme::Dark => {
+                let mut visuals = egui::Visuals::dark();
+                visuals.override_text_color = Some(egui::Color32::from_rgb(220, 220, 220));
+                visuals.window_stroke = egui::Stroke {
+                    width: 2.0,
+                    color: egui::Color32::from_rgb(200, 100, 0),
+                };
+                style.visuals = visuals;
+            }
+            Theme::Light => {
+                let mut visuals = egui::Visuals::light();
+                visuals.panel_fill = egui::Color32::from_rgb(242, 235, 217);
+                visuals.override_text_color = Some(egui::Color32::BLACK);
+                visuals.selection.bg_fill = egui::Color32::from_rgb(148, 214, 255);
+                visuals.hyperlink_color = egui::Color32::from_rgb(0, 128, 128);
+                visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(230, 220, 200);
+                visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(215, 204, 182);
+								visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(215, 204, 182); 
+                visuals.widgets.active.bg_fill = egui::Color32::from_rgb(210, 200, 180);
+								visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
+                visuals.window_stroke = egui::Stroke {
+                    width: 2.0,
+                    color: egui::Color32::from_rgb(107, 79, 63),
+                };
+                style.visuals = visuals;
+            }
+        }
+        style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::new(18.0, egui::FontFamily::Proportional));
+        style.text_styles.insert(egui::TextStyle::Body, egui::FontId::new(16.0, egui::FontFamily::Proportional));
+        style.text_styles.insert(egui::TextStyle::Button, egui::FontId::new(16.0, egui::FontFamily::Proportional));
+        style.text_styles.insert(egui::TextStyle::Small, egui::FontId::new(14.0, egui::FontFamily::Proportional));
+        style.text_styles.insert(
+            egui::TextStyle::Name("FontTiny".into()), 
+            egui::FontId::new(10.0, egui::FontFamily::Proportional) // 极小尺寸
+        );
+    });
+}
+
+pub fn get_theme_colors(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
+    let visuals = &ctx.style().visuals;
+
 	match theme {
-		Theme::Dark => {
-			let mut visuals = egui::Visuals::dark();
-			visuals.override_text_color = Some(egui::Color32::from_rgb(220, 220, 220));
-
-			visuals.window_stroke = egui::Stroke {
-				width: 2.0,               
-				color: egui::Color32::from_rgb(200, 100, 0), 
-			};
-
-			ctx.set_visuals(visuals.clone());
-
-
-
-			ThemeColors {
+		Theme::Dark => ThemeColors {
 				book_selected_bg: egui::Color32::from_rgb(50, 100, 160),
 				chapter_selected_bg: egui::Color32::from_rgb(60, 140, 80),
 				book_unselected_bg: visuals.widgets.inactive.bg_fill,
@@ -58,34 +88,9 @@ pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
 				//link_color: egui::Color32::from_rgb(0, 191, 255),
 				search_hl_bg: egui::Color32::from_rgb(255, 215, 0),
 				search_hl_fg: egui::Color32::BLACK,
-			}
-		}
-		Theme::Light => {
-			let mut visuals = egui::Visuals::light();
-			visuals.panel_fill = egui::Color32::from_rgb(242, 235, 217);
-			visuals.override_text_color = Some(egui::Color32::BLACK);
-			visuals.selection.bg_fill = egui::Color32::from_rgb(148, 214, 255);
-
-			visuals.hyperlink_color = egui::Color32::from_rgb(0, 128, 128); 
-
-			// 按钮背景色
-			visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(230, 220, 200);
-			//visuals.widgets.hovered.bg_fill  = egui::Color32::from_rgb(240, 230, 210);
-			visuals.widgets.hovered.bg_fill  = egui::Color32::from_rgb(255, 215, 0);
-			visuals.widgets.active.bg_fill   = egui::Color32::from_rgb(210, 200, 180);
-
-			//弹窗背景色
-			//visuals.window_fill = egui::Color32::from_rgb(255, 240, 186);
-			visuals.window_stroke = egui::Stroke {
-				width: 2.0,               
-				color: egui::Color32::from_rgb(107, 79, 63), 
-			};
-
-
-			ctx.set_visuals(visuals.clone());
-
-
-			ThemeColors {
+        },
+		
+		Theme::Light => ThemeColors {
 				book_selected_bg: egui::Color32::from_rgb(50, 100, 160),
 				chapter_selected_bg: egui::Color32::from_rgb(60, 140, 80),
 				book_unselected_bg: egui::Color32::from_rgb(229,215,179),
@@ -102,7 +107,10 @@ pub fn apply_theme(ctx: &egui::Context, theme: &Theme) -> ThemeColors {
 				//link_color: egui::Color32::from_rgb(0, 128, 128),
 				search_hl_bg: egui::Color32::from_rgb(255, 215, 0),
 				search_hl_fg: egui::Color32::BLACK,
-			}
-		}
+        },
+		
 	}
+}
+pub fn font_size_tiny() -> egui::TextStyle {
+    egui::TextStyle::Name("FontTiny".into())
 }
