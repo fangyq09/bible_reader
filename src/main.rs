@@ -830,11 +830,13 @@ impl BibleApp {
 						if import_export_btn.clicked(){
 							self.show_import_export_window = true;
 							self.show_settings_menu = false;
+							self.show_parallel_window = false;
 						}
 
 						if toggle_editable_btn.clicked(){
 							self.editable_mode = !self.editable_mode;
 							self.show_notes = false;
+							self.show_parallel_window = false;
 						}
 					});
 				});
@@ -1184,6 +1186,7 @@ impl BibleApp {
 					);
 					// --- 右键点击位置解析节号 ---
 					if text_response.secondary_clicked() {
+						self.show_parallel_window = false;
 						if let Some(pointer_pos) = ctx.pointer_interact_pos() {
 							let relative_pos = pointer_pos - text_response.rect.min;
 							let mut job = layout.clone();
@@ -1193,7 +1196,6 @@ impl BibleApp {
 							let char_idx = cursor.index;
 							self.selected_verse_num = parse_verse_num_at_index(&self.content, char_idx);
 							self.parallel_window_pos = Some(pointer_pos);
-							//println!("右键 char_idx = {}, verse = {:?}", char_idx, self.selected_verse_num);
 						}
 					}
 					self.show_right_click_menu(&mut text_response, true);
@@ -1469,6 +1471,7 @@ impl BibleApp {
 		self.highlight_query = None;
 		self.show_highlight = false; 
 		self.editable_mode = false;
+		self.show_parallel_window = false;
 
 		let old_book = self.current_book;
 		let old_chapter = self.current_chapter.clone();
@@ -1527,6 +1530,8 @@ impl BibleApp {
 		if self.current_book.is_some() {
 			self.record_jump();
     }
+		self.show_parallel_window = false;
+		self.show_search_window = false;
 		self.current_book = Some(book_num);
 		let abbr = book_number_to_abbr(book_num);
     self.chapter_panel_title = format!("章节（{}）", abbr);
@@ -1566,6 +1571,8 @@ impl BibleApp {
 		if self.current_chapter.is_some() {
 			self.record_jump();
     }
+		self.show_parallel_window = false;
+		self.show_search_window = false;
 		self.current_book = Some(book_num.clone());
 		self.current_chapter = Some(ch.clone());
 		let ch_num = ch.parse().unwrap_or(1);
