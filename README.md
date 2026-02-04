@@ -3,6 +3,7 @@
 
 - 适合人群：专注于阅读圣经，以及有少量笔记需求者。
 
+- 下载地址：https://github.com/fangyq09/bible_reader/releases
 
 - Linux上的安装： 直接下载Linux平台的二进制程序，将其解压放在 /usr/local/bin/下面或~/.local/bin/下， 加上可执行权限即可。
 
