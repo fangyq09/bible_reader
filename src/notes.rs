@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 use crate::theme::{ThemeColors,font_size_tiny};
 use crate::BibleApp;
 use crate::ParallelVerse;
-use crate::utils::{version_display_name,sort_versions_chinese_first,book_number_to_abbr_en};
+use crate::utils::{version_display_name,sort_versions_chinese_first};
 use std::fs;
 use rfd::FileDialog;
 
@@ -898,12 +898,13 @@ impl BibleApp {
 	}
 }
 
-
+//加载对比经文
 impl BibleApp {
 	pub fn load_parallel_verses(&mut self, verse_num: i32) {
 		self.parallel_verses.clear();
 
-		let chapter: i32 = match &self.current_chapter {
+		// 获取当前章节的整数值
+		let chapter_num: i32 = match &self.current_chapter {
 			Some(s) => match s.parse::<i32>() {
 				Ok(v) => v,
 				Err(_) => { return; }
@@ -911,19 +912,18 @@ impl BibleApp {
 			None => { return; }
 		};
 
-		let book_abbr = match self.current_book {
-			Some(num) => book_number_to_abbr_en(num),
+		// 获取当前书卷的编号 (book_num)
+		let book_num = match self.current_book {
+			Some(num) => num, // 假设 self.current_book 存储的就是 1-66 的编号
 			None => { return; }
 		};
 
-		let verse_key = chapter as f64 + verse_num as f64 / 1000.0;
-
 		// 遍历所有译本
 		for version in &self.versions {
-
 			if version == &self.current_version {
-				continue; // 跳过当前版本
+				continue; 
 			}
+
 			let db_path = self.bible_root.join(version);
 
 			let conn = match rusqlite::Connection::open(&db_path) {
@@ -931,12 +931,13 @@ impl BibleApp {
 				Err(_) => { continue; }
 			};
 
+			// 使用 book_num, chapter_num, verse_num 进行精确匹配
 			let result: rusqlite::Result<String> = conn.query_row(
-				"SELECT unformatted
-								 FROM verses
-								 WHERE TRIM(book) = ?1 COLLATE NOCASE AND ROUND(verse,3) = ?2
+				"SELECT unformatted 
+								 FROM verses 
+								 WHERE book_num = ?1 AND chapter_num = ?2 AND verse_num = ?3 
 								 LIMIT 1",
-								(book_abbr, verse_key),
+								(book_num, chapter_num, verse_num),
 								|row| row.get(0),
 						);
 

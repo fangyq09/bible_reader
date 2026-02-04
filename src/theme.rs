@@ -43,7 +43,8 @@ pub fn apply_theme(ctx: &egui::Context, theme: &Theme) {
                 visuals.override_text_color = Some(egui::Color32::BLACK);
                 visuals.selection.bg_fill = egui::Color32::from_rgb(148, 214, 255);
                 visuals.hyperlink_color = egui::Color32::from_rgb(0, 128, 128);
-                visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(230, 220, 200);
+                //visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(230, 220, 200);
+                visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(210, 180, 140);
                 visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(215, 204, 182);
 								visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(215, 204, 182); 
                 visuals.widgets.active.bg_fill = egui::Color32::from_rgb(210, 200, 180);

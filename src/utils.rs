@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use crate::theme::ThemeColors;
 
 
-/// 从 SQLite 数据库加载书卷
+// 从 SQLite 数据库加载书卷
 pub fn load_books(conn: &Connection) -> Vec<(i32, String)> {
     let mut stmt = conn
         .prepare("SELECT number, human FROM books ORDER BY number")
@@ -19,55 +19,97 @@ pub fn load_books(conn: &Connection) -> Vec<(i32, String)> {
     rows.map(|r| r.unwrap()).collect()
 }
 
-/// 从 SQLite 数据库加载章节列表
-pub fn load_chapters(conn: &Connection, book_number: i32) -> Vec<String> {
-    let osis: String = conn
+// 从 SQLite 数据库加载章节列表
+pub fn load_chapters(conn: &Connection, book_num: i32) -> Vec<i32> {
+    let total_chapters: i32 = conn
         .query_row(
-            "SELECT osis FROM books WHERE number = ?",
-            [book_number],
+            "SELECT chapters FROM books WHERE number = ?1",
+            [book_num],
             |row| row.get(0),
         )
-        .unwrap_or_default();
+        .unwrap_or(0);
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT reference_osis FROM chapters WHERE reference_osis LIKE ?1 || '.%' ORDER BY reference_osis",
-        )
-        .unwrap();
-
-    let rows = stmt.query_map([osis], |row| row.get::<_, String>(0)).unwrap();
-
-    rows.map(|r| r.unwrap().split('.').last().unwrap_or("0").to_string())
-        .collect()
+    // 直接生成 1 到 N 的数字列表
+    (1..=total_chapters).collect()
 }
 
-/// 从 SQLite 读取章节内容
-
-pub fn load_chapter_content(conn: &Connection, book_number: i32, chapter: i32) -> String {
-    let osis: String = conn
-        .query_row(
-            "SELECT osis FROM books WHERE number = ?",
-            [book_number],
-            |row| row.get(0),
-        )
-        .unwrap_or_default();
-
-    let reference = format!("{}.{}", osis, chapter);
-
-    conn.query_row(
-        "SELECT content FROM chapters WHERE reference_osis = ?1",
-        [reference],
+// 从 SQLite 读取章节内容
+//pub fn load_chapter_content(conn: &Connection, book_number: i32, chapter: i32) -> String {
+//    // 1. 获取 OSIS 缩写（用于 chapters 表查询）
+//    let osis: String = conn
+//        .query_row(
+//            "SELECT osis FROM books WHERE number = ?",
+//            [book_number],
+//            |row| row.get(0),
+//        )
+//        .unwrap_or_default();
+//
+//    // 2. 检查 chapters 表是否存在
+//    let has_chapters_table: bool = conn
+//        .query_row(
+//            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='chapters'",
+//            [],
+//            |row| row.get::<_, i32>(0),
+//        )
+//        .unwrap_or(0) > 0;
+//
+//    if has_chapters_table {
+//        // 逻辑 A：尝试从 chapters 表读取
+//        let reference = format!("{}.{}", osis, chapter);
+//        let result = conn.query_row(
+//            "SELECT content FROM chapters WHERE reference_osis = ?1",
+//            [reference],
+//            |row| row.get::<_, String>(0),
+//        );
+//
+//        if let Ok(content) = result {
+//            return content;
+//        }
+//    }
+//
+//    // 逻辑 B: 从 verses 表实时合并经文
+//    // 使用 group_concat 将该章所有经文拼接，这里用 \n 分段，你可以根据 UI 改为 <br>
+//		let merged_content: rusqlite::Result<String> = conn.query_row(
+//			"SELECT group_concat(line, '\n') 
+//         FROM (SELECT '[' || verse_num || '] ' || unformatted as line 
+//							 FROM verses 
+//							 WHERE book_num = ?1 AND chapter_num = ?2 
+//							 ORDER BY verse_num)",
+//				(book_number, chapter),
+//				|row| row.get(0),
+//		);
+//
+//    merged_content.unwrap_or_else(|_| "（未找到章节内容）".to_string())
+//}
+pub fn load_chapter_content(conn: &Connection, book_num: i32, chapter: i32) -> String {
+    // 1. 尝试从预生成的 chapters 表读取（最快路径）
+    // 注意：这里我们甚至不需要检查表是否存在，直接 query 即可。
+    // 如果表不存在或没数据，query_row 会返回 Err。
+    let result: rusqlite::Result<String> = conn.query_row(
+        "SELECT content FROM chapters WHERE book_num = ?1 AND chapter_num = ?2",
+        [book_num, chapter],
         |row| row.get(0),
-    )
-    .unwrap_or_else(|_| "（未找到章节内容）".to_string())
+    );
+
+    if let Ok(content) = result {
+        return content;
+    }
+
+    // 2. 备选方案：如果 chapters 表不可用，实时合并 verses（逻辑 B）
+    let merged: rusqlite::Result<String> = conn.query_row(
+        "SELECT group_concat(line, '\n') 
+				 FROM (SELECT (CAST(verse_num AS TEXT) || ' ' || unformatted) as line 
+               FROM verses 
+               WHERE book_num = ?1 AND chapter_num = ?2 
+               ORDER BY verse_num)",
+        [book_num, chapter],
+        |row| row.get(0),
+    );
+
+    merged.unwrap_or_else(|_| "（内容加载失败）".to_string())
 }
 
-/// 章节排序辅助
-pub fn chapter_number(chap: &str) -> u32 {
-	chap.parse::<u32>().unwrap_or(0)
-}
-
-/// 章节显示名
+// 章节显示名
 pub fn chapter_display_name(chap: &str) -> String {
 	if chap == "0" {
 		"简介".to_string()
@@ -76,7 +118,7 @@ pub fn chapter_display_name(chap: &str) -> String {
 	}
 }
 
-/// 版本显示名
+// 版本显示名
 pub fn version_display_name(version: &str) -> String {
     version.trim_end_matches(".sqlite3").trim_end_matches(".db").to_string()
 }
@@ -87,7 +129,7 @@ fn has_chinese(s: &str) -> bool {
     })
 }
 
-/// 中文优先，其余字典序排序
+// 中文优先，其余字典序排序
 pub fn sort_versions_chinese_first(versions: &mut Vec<String>) {
     versions.sort_by(|a, b| {
         let a_cn = has_chinese(a);
@@ -101,7 +143,7 @@ pub fn sort_versions_chinese_first(versions: &mut Vec<String>) {
     });
 }
 
-/// 只读多行文本显示
+// 只读多行文本显示
 //pub fn readonly_content_text(ui: &mut egui::Ui, text: &str) -> egui::Response {
 //	let response = ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
 //		ui.set_width(ui.available_width()); 
@@ -266,24 +308,24 @@ pub fn book_number_to_abbr(number: i32) -> &'static str {
     }
 }
 
-pub fn book_number_to_abbr_en(number: i32) -> &'static str {
-    // 圣经 66 卷的英文缩写（按常见顺序）
-    const ABBRS: [&str; 66] = [
-        "GEN", "EXOD", "LEV", "NUM", "DEUT", "JOSH", "JUDG", "RUTH", "1SAM", "2SAM",
-        "1KGS", "2KGS", "1CHR", "2CHR", "EZRA", "NEH", "ESTH", "JOB", "PS", "PROV",
-        "ECCL", "SONG", "ISA", "JER", "LAM", "EZEK", "DAN", "HOS", "JOEL", "AMOS",
-        "OBAD", "JONAH", "MIC", "NAH", "HAB", "ZEPH", "HAG", "ZECH", "MAL",
-        "MATT", "MARK", "LUKE", "JOHN", "ACTS", "ROM", "1COR", "2COR", "GAL", "EPH",
-        "PHIL", "COL", "1THESS", "2THESS", "1TIM", "2TIM", "TITUS", "PHLM",
-        "HEB", "JAS", "1PET", "2PET", "1JOHN", "2JOHN", "3JOHN", "JUDE", "REV"
-    ];
-
-    if number >= 1 && number <= 66 {
-        ABBRS[(number - 1) as usize]
-    } else {
-        "UNK" // 未知
-    }
-}
+//pub fn book_number_to_abbr_en(number: i32) -> &'static str {
+//    // 圣经 66 卷的英文缩写（按常见顺序）
+//    const ABBRS: [&str; 66] = [
+//        "GEN", "EXOD", "LEV", "NUM", "DEUT", "JOSH", "JUDG", "RUTH", "1SAM", "2SAM",
+//        "1KGS", "2KGS", "1CHR", "2CHR", "EZRA", "NEH", "ESTH", "JOB", "PS", "PROV",
+//        "ECCL", "SONG", "ISA", "JER", "LAM", "EZEK", "DAN", "HOS", "JOEL", "AMOS",
+//        "OBAD", "JONAH", "MIC", "NAH", "HAB", "ZEPH", "HAG", "ZECH", "MAL",
+//        "MATT", "MARK", "LUKE", "JOHN", "ACTS", "ROM", "1COR", "2COR", "GAL", "EPH",
+//        "PHIL", "COL", "1THESS", "2THESS", "1TIM", "2TIM", "TITUS", "PHLM",
+//        "HEB", "JAS", "1PET", "2PET", "1JOHN", "2JOHN", "3JOHN", "JUDE", "REV"
+//    ];
+//
+//    if number >= 1 && number <= 66 {
+//        ABBRS[(number - 1) as usize]
+//    } else {
+//        "UNK" // 未知
+//    }
+//}
 
 pub fn draw_hover_button(
     ui: &mut egui::Ui,
@@ -310,6 +352,80 @@ pub fn draw_hover_button(
 
     // 返回 Response，方便判断点击
     response
+}
+
+
+pub fn parse_verse_num_at_index(content: &str, char_idx: usize) -> Option<i32> {
+    if content.is_empty() {
+        return None;
+    }
+
+    let chars: Vec<char> = content.chars().collect();
+    let len = chars.len();
+    let mut start = char_idx;
+    let mut end = char_idx;
+
+    // 如果光标在数字内部，向左找到数字开头
+    while start > 0 && chars[start - 1].is_ascii_digit() {
+        start -= 1;
+    }
+
+    // 向右找到数字末尾
+    while end < len && chars[end].is_ascii_digit() {
+        end += 1;
+    }
+
+    // 提取数字字符串
+    if start < end {
+        let digits: String = chars[start..end].iter().collect();
+        if let Ok(verse) = digits.parse::<i32>() {
+            if verse <= 176 {
+                return Some(verse);
+            }
+        }
+    }
+
+    // 如果光标不在数字内部，则向左扫描最多2000个字符
+    let mut i = char_idx.min(len);
+    let scan_limit = i.saturating_sub(2000);
+    let mut digits = String::new();
+    let mut found_digit = false;
+
+    while i > scan_limit {
+        i -= 1;
+        let c = chars[i];
+
+        if c.is_ascii_digit() {
+            digits.insert(0, c);
+            found_digit = true;
+        } else if found_digit {
+            if c != '\n' && !c.is_whitespace() {
+                digits.clear();
+                found_digit = false;
+                continue;
+            }
+
+            if let Ok(verse) = digits.parse::<i32>() {
+                if verse <= 176 {
+                    return Some(verse);
+                }
+            }
+
+            digits.clear();
+            found_digit = false;
+        }
+    }
+
+    // 如果扫描结束，最后检查一次
+    if found_digit {
+        if let Ok(verse) = digits.parse::<i32>() {
+            if verse <= 176 {
+                return Some(verse);
+            }
+        }
+    }
+
+    None
 }
 
 

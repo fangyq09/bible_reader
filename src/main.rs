@@ -19,13 +19,13 @@ use crate::utils::{
 	load_books,
 	load_chapters,
 	load_chapter_content,
-	chapter_number,
 	chapter_display_name,
 	version_display_name,
 	sort_versions_chinese_first,
 	book_number_to_abbr,
 	highlight_search_terms,
 	draw_hover_button,
+	parse_verse_num_at_index,
 };
 use crate::notes::{Notedb};
 use crate::note_app::NoteApp;
@@ -38,6 +38,7 @@ struct ContentState {
     query: Option<String>,
     theme: Theme,
     show_highlight: bool,
+		font_size: f32,
 }
 
 #[derive(Clone, PartialEq)]
@@ -99,6 +100,8 @@ struct BibleApp {
 	pub parallel_verses: Vec<ParallelVerse>,
 	pub show_parallel_window: bool,
 	pub parallel_window_pos: Option<egui::Pos2>,
+	body_font_size: f32,
+	show_font_size_popup: bool,
 }
 //中文字体
 pub fn configure_chinese_font(ctx: &egui::Context) {
@@ -136,8 +139,8 @@ impl BibleApp {
 			("和合本.sqlite3", include_bytes!("../assets/sqlite/cunpss.sqlite3")),
 			("和修本.sqlite3", include_bytes!("../assets/sqlite/rcuvss.sqlite3")),
 			("当代译本.sqlite3", include_bytes!("../assets/sqlite/ccb.sqlite3")),
-			("niv2011.sqlite3", include_bytes!("../assets/sqlite/niv2011.sqlite3")),
-			("sg21.sqlite3", include_bytes!("../assets/sqlite/sg21.sqlite3")),
+			("NET.sqlite3", include_bytes!("../assets/sqlite/NET.sqlite3")),
+			("SG21.sqlite3", include_bytes!("../assets/sqlite/sg21.sqlite3")),
 		];
 
 		for (filename, content) in built_in_files {
@@ -225,6 +228,8 @@ impl BibleApp {
 				parallel_verses: Vec::new(),
 				show_parallel_window: false,
 				parallel_window_pos: None,
+				body_font_size: 16.0,
+				show_font_size_popup: false,
 			};
 
 			// 若没有任何圣经数据库，就不加载，直接返回 app
@@ -301,13 +306,6 @@ fn perform_search(&mut self) -> rusqlite::Result<()> {
 
 		self.open_current_db();
 		let conn = self.conn.as_ref().unwrap();
-    //let conn = match &self.conn {
-    //    Some(c) => c,
-    //    None => {
-    //        eprintln!("原始数据库尚未初始化！");
-    //        return Ok(());
-    //    }
-    //};
 
     let query = self.search_query.trim();
     if query.is_empty() { return Ok(()); }
@@ -418,52 +416,6 @@ impl BibleApp {
 		}
 	}
 }
-//impl BibleApp {
-//	fn ui_left_books_panel(&mut self, ctx: &egui::Context, colors: &ThemeColors) {
-//		let mut selected_book: Option<i32> = None;
-//
-//		egui::SidePanel::left("books_panel")
-//			.resizable(true)
-//			.default_width(150.0)
-//			.show(ctx, |ui| {
-//				self.version_menu_button(ui, &colors);
-//				ui.separator();
-//
-//				let row_height = ui.text_style_height(&egui::TextStyle::Body) 
-//					+ ui.spacing().item_spacing.y;
-//
-//				egui::ScrollArea::vertical()
-//					.auto_shrink([false; 2])
-//					.show_rows(ui, row_height, self.books.len(), |ui, row_range| {
-//						for i in row_range {
-//							let (num, name) = &self.books[i];
-//							let is_selected = Some(*num) == self.current_book;
-//
-//							let bg = if is_selected {
-//								colors.book_selected_bg
-//							} else {
-//								colors.book_unselected_bg
-//							};
-//							let txt_color = if is_selected {
-//								colors.selected_text_color
-//							} else {
-//								colors.text_color
-//							};
-//
-//							let txt = egui::RichText::new(name).color(txt_color);
-//
-//							if ui.add(egui::Button::new(txt).fill(bg)).clicked() {
-//								selected_book = Some(*num);
-//							}
-//						}
-//					});
-//			});
-//
-//		if let Some(b) = selected_book {
-//			self.on_book_selected(b);
-//		}
-//	}
-//}
 
 //中间章节栏目
 impl BibleApp {
@@ -715,7 +667,7 @@ impl BibleApp {
 
 			egui::Area::new(area_id)
 				.order(egui::Order::Foreground)
-				.current_pos(button_resp.rect.left_bottom())
+				.current_pos(button_resp.rect.left_bottom()+ egui::vec2(-50.0, 0.0))
 				.show(ui.ctx(), |ui| {
 					let frame = egui::Frame {
 						fill: colors.menu_button_bg,
@@ -789,6 +741,21 @@ impl BibleApp {
 							colors,
 						);
 
+						let font_size_btn = draw_hover_button(
+							ui,
+							"字体大小",
+							egui::Vec2::new(70.0, 24.0),
+							colors,
+						);
+
+						// 复制整章
+						let copy_chapter_btn = draw_hover_button(
+							ui,
+							"复制整章",
+							egui::Vec2::new(70.0, 24.0),
+							colors,
+						);
+
 
 						//if dark_theme_btn.clicked()
 						//{
@@ -838,6 +805,16 @@ impl BibleApp {
 							self.show_notes = false;
 							self.show_parallel_window = false;
 						}
+
+						if font_size_btn.clicked() {
+							self.show_font_size_popup = true;
+							self.show_settings_menu = false;
+						}
+
+						if copy_chapter_btn.clicked() {
+							ui.ctx().copy_text(self.content.clone());
+							self.show_settings_menu = false;
+						}
 					});
 				});
 
@@ -861,16 +838,22 @@ impl BibleApp {
 		}
 
 		let screen_rect = ctx.available_rect();
+		let margin = egui::vec2(16.0, 36.0);
+
+		let pos = egui::pos2(
+			screen_rect.right() - margin.x,
+			screen_rect.top() + margin.y,
+		);
 
 
 		let area_res = egui::Area::new(egui::Id::new("import_export_menu"))
 			.order(egui::Order::Foreground)
-			.fixed_pos(screen_rect.center())
-			.pivot(egui::Align2::CENTER_CENTER)
+			.fixed_pos(pos)
+			.pivot(egui::Align2::RIGHT_TOP)
 			.show(ctx, |ui| {
 				egui::Frame::default()
 					.fill(colors.menu_button_bg)
-					.stroke(egui::Stroke::new(1.0, colors.menu_stroke))
+					.stroke(egui::Stroke::new(2.0, colors.menu_stroke))
 					.corner_radius(egui::CornerRadius::same(6))
 					.shadow(egui::Shadow {
 						offset: [0, 4],
@@ -923,6 +906,69 @@ impl BibleApp {
 		}
 	}
 }
+//字体大小弹窗
+impl BibleApp {
+	pub fn font_size_popup(&mut self, ctx: &egui::Context, colors: &ThemeColors) {
+		if !self.show_font_size_popup {
+			return;
+		}
+
+		let screen_rect = ctx.available_rect();
+		let margin = egui::vec2(16.0, 36.0);
+
+		let pos = egui::pos2(
+			screen_rect.right() - margin.x,
+			screen_rect.top() + margin.y,
+		);
+
+		let area_res = egui::Area::new(egui::Id::new("font_size_popup"))
+			.order(egui::Order::Foreground)
+			.fixed_pos(pos)
+			.pivot(egui::Align2::RIGHT_TOP)
+			.show(ctx, |ui| {
+				egui::Frame::default()
+					.fill(colors.menu_button_bg)
+					.stroke(egui::Stroke::new(2.0, colors.menu_stroke))
+					.corner_radius(egui::CornerRadius::same(6))
+					.inner_margin(egui::Margin::symmetric(12, 8))
+					.show(ui, |ui| {
+						ui.set_width(160.0); // 直接固定 Frame 宽度
+						ui.vertical(|ui| {
+							ui.label("临时调整字体大小");
+							ui.add_space(4.0);
+							ui.horizontal(|ui| {
+								ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::GOLD
+									.lerp_to_gamma(egui::Color32::BLACK, 0.3);
+								ui.visuals_mut().widgets.active.bg_fill = egui::Color32::GOLD
+									.lerp_to_gamma(egui::Color32::BLACK, 0.5);
+								ui.visuals_mut().widgets.hovered.bg_fill = egui::Color32::RED
+									.lerp_to_gamma(egui::Color32::BLACK, 0.4);
+								ui.add(
+									egui::Slider::new(&mut self.body_font_size, 16.0..=48.0)
+									.show_value(false)
+								);
+								ui.label(format!("{:.0} pt", self.body_font_size));
+							});
+							
+						});
+					});
+			});
+
+		// 点击外部关闭
+		if ctx.input(|i| i.pointer.any_pressed()) {
+			if let Some(pos) = ctx.pointer_interact_pos() {
+				if !area_res.response.rect.contains(pos) {
+					self.show_font_size_popup = false;
+				}
+			}
+		}
+
+		// Esc 关闭
+		if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+			self.show_font_size_popup = false;
+		}
+	}
+}
 
 //右侧顶栏
 impl BibleApp {
@@ -955,21 +1001,22 @@ impl BibleApp {
 			ui.add_space(10.0);
 			self.ui_search_box(ui, colors);
 
-			ui.add_space(ui.available_width() - 120.0);
 
-			// 复制整章
-			let copy_btn = ui.add(
-				egui::Button::new(
-					egui::RichText::new("复制整章")
-					.color(colors.text_color)
-				)
-				.fill(colors.menu_button_bg) 
-			);
-			if copy_btn.clicked() {
-				ui.ctx().copy_text(self.content.clone());
-			}
+			//ui.add_space(ui.available_width() - 120.0);
+			//// 复制整章
+			//let copy_btn = ui.add(
+			//	egui::Button::new(
+			//		egui::RichText::new("复制整章")
+			//		.color(colors.text_color)
+			//	)
+			//	.fill(colors.menu_button_bg) 
+			//);
+			//if copy_btn.clicked() {
+			//	ui.ctx().copy_text(self.content.clone());
+			//}
 
 			// 主题按钮
+			ui.add_space(ui.available_width() - 30.0);
 			self.settings_menu_button(ui, &colors);
 		});
 	}
@@ -1156,14 +1203,15 @@ impl BibleApp {
 			query: self.highlight_query.clone(),
 			theme: self.theme,
 			show_highlight: self.show_highlight,
+			font_size: self.body_font_size,
 		};
 		if self.content_layout.is_none() || self.last_state.as_ref() != Some(&current_state) {
 			let theme_colors = get_theme_colors(ctx, &self.theme);
-			self.content_layout = Some(self.prepare_content_layout(ui, &theme_colors));
+			self.content_layout = Some(self.prepare_content_layout(&theme_colors));
 			self.last_state = Some(current_state);
 		}
 
-		let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
+		let body_dynamic_font = egui::FontId::proportional(self.body_font_size);
 		egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
 			if self.editable_mode {
 				let text_edit = egui::TextEdit::multiline(&mut self.content)
@@ -1171,7 +1219,7 @@ impl BibleApp {
 					.frame(false)
 					.interactive(true) 
 					.clip_text(false)
-				.font(body_font_id);
+				.font(body_dynamic_font);
 				ui.add(text_edit);
 			} else {
 				let content_rect = ui.available_rect_before_wrap();
@@ -1208,14 +1256,14 @@ impl BibleApp {
 		});
 	}
 
-	fn prepare_content_layout(&self, ui: &egui::Ui, colors: &ThemeColors) -> egui::text::LayoutJob {
+	fn prepare_content_layout(&self, colors: &ThemeColors) -> egui::text::LayoutJob {
 		let mut job = egui::text::LayoutJob::default();
-		let body_font_id = ui.style().text_styles[&egui::TextStyle::Body].clone();
+		let body_dynamic_font = egui::FontId::proportional(self.body_font_size);
 
 		if self.show_highlight {
 			if let Some(query) = self.highlight_query.as_deref() {
 				if !query.is_empty() {
-					highlight_search_terms(&self.content, query, colors, &mut job, &body_font_id);
+					highlight_search_terms(&self.content, query, colors, &mut job, &body_dynamic_font);
 					return job; 
 				}
 			}
@@ -1225,87 +1273,13 @@ impl BibleApp {
 			&self.content,
 			0.0,
 			egui::TextFormat {
-				font_id: body_font_id,
+				font_id: body_dynamic_font,
 				color: colors.text_color,
 				..Default::default()
 			},
 		);
 		job
 	}
-}
-
-
-fn parse_verse_num_at_index(content: &str, char_idx: usize) -> Option<i32> {
-    if content.is_empty() {
-        return None;
-    }
-
-    let chars: Vec<char> = content.chars().collect();
-    let len = chars.len();
-    let mut start = char_idx;
-    let mut end = char_idx;
-
-    // 如果光标在数字内部，向左找到数字开头
-    while start > 0 && chars[start - 1].is_ascii_digit() {
-        start -= 1;
-    }
-
-    // 向右找到数字末尾
-    while end < len && chars[end].is_ascii_digit() {
-        end += 1;
-    }
-
-    // 提取数字字符串
-    if start < end {
-        let digits: String = chars[start..end].iter().collect();
-        if let Ok(verse) = digits.parse::<i32>() {
-            if verse <= 176 {
-                return Some(verse);
-            }
-        }
-    }
-
-    // 如果光标不在数字内部，则向左扫描最多2000个字符
-    let mut i = char_idx.min(len);
-    let scan_limit = i.saturating_sub(2000);
-    let mut digits = String::new();
-    let mut found_digit = false;
-
-    while i > scan_limit {
-        i -= 1;
-        let c = chars[i];
-
-        if c.is_ascii_digit() {
-            digits.insert(0, c);
-            found_digit = true;
-        } else if found_digit {
-            if c != '\n' && !c.is_whitespace() {
-                digits.clear();
-                found_digit = false;
-                continue;
-            }
-
-            if let Ok(verse) = digits.parse::<i32>() {
-                if verse <= 176 {
-                    return Some(verse);
-                }
-            }
-
-            digits.clear();
-            found_digit = false;
-        }
-    }
-
-    // 如果扫描结束，最后检查一次
-    if found_digit {
-        if let Ok(verse) = digits.parse::<i32>() {
-            if verse <= 176 {
-                return Some(verse);
-            }
-        }
-    }
-
-    None
 }
 
 //右键菜单
@@ -1340,7 +1314,7 @@ fn parse_verse_num_at_index(content: &str, char_idx: usize) -> Option<i32> {
 		});
 	}
 }
-
+//经文对比窗口
 impl BibleApp {
 	fn show_parallel_window(&mut self, ctx: &egui::Context) {
 		if !self.show_parallel_window {
@@ -1362,37 +1336,29 @@ impl BibleApp {
 		let verses = self.parallel_verses.clone();
 
 		//  再画窗口
-		let default_width = 300.0;
-		let default_height = 250.0;
-		let offset = 10.0;
-		// 计算窗口初始位置
-		let pos = self.parallel_window_pos.map(|p| {
-			let screen_rect = ctx.content_rect();
-			let mut x = p.x;
-			let mut y = p.y + offset; // 默认下方偏移
-
-			// 如果下方空间不足，让窗口从上方弹出
-			if y + default_height > screen_rect.bottom() {
-				y = (p.y - default_height - offset).max(screen_rect.top());
-			}
-
-			// 保证 x 不超出屏幕
-			x = x.min(screen_rect.right() - default_width).max(screen_rect.left());
-
-			egui::pos2(x, y)
-		});
-
-		// 创建窗口
 		let mut window = egui::Window::new(header)
+			.id(egui::Id::new("parallel_verse_window")) // 明确 ID，确保状态持久化
 			.open(&mut self.show_parallel_window)
 			.resizable(true)
 			.vscroll(true)
-			.default_width(default_width)   
-			.default_height(default_height); 
+			.default_width(300.0)
+			.default_height(250.0);
 
-		// 如果有点击位置，则设置窗口初始位置
-		if let Some(p) = pos {
-			window = window.current_pos(p);
+		// 只有当 parallel_window_pos 存在时才设置
+		if let Some(p) = self.parallel_window_pos {
+			let offset = 10.0;
+			let screen_rect = ctx.input(|i| i.viewport_rect());
+
+			// 计算逻辑
+			let mut y = p.y + offset;
+			if y + 250.0 > screen_rect.bottom() {
+				y = (p.y - 250.0 - offset).max(screen_rect.top());
+			}
+			let x = p.x.min(screen_rect.right() - 300.0).max(screen_rect.left());
+
+			window = window.fixed_pos(egui::pos2(x, y));
+
+			self.parallel_window_pos = None; 
 		}
 
 		window.show(ctx, |ui| {
@@ -1405,7 +1371,6 @@ impl BibleApp {
 						.strong()
 						.color(egui::Color32::from_rgb(200, 30, 30)),
 					);
-					//ui.label(&pv.text);
 					ui.label(egui::RichText::new(&pv.text).font(small_font.clone()));
 				});
 				ui.separator();
@@ -1495,24 +1460,27 @@ impl BibleApp {
 
 			// 如果有书卷，加载章节
 			if let Some(book) = self.current_book {
-				let mut chapters = load_chapters(conn, book);
-				chapters.sort_by_key(|c| chapter_number(c));
-				self.chapters = chapters;
+				// 1. 现在 chapters 直接就是 Vec<i32>，且 load_chapters 内部已经排好序了
+				let chapters_vec = load_chapters(conn, book);
 
-				// 尝试保持原章节，否则选择第一章
+				// 将 i32 转换为 String 存入 self.chapters (self.chapters 依然需要存 String 以供 UI 使用)
+				self.chapters = chapters_vec.iter().map(|c| c.to_string()).collect();
+
+				// 2. 尝试保持原章节
+				// old_chapter 应该是 Option<String>
 				self.current_chapter = old_chapter
 					.filter(|c| self.chapters.contains(c))
 					.or_else(|| self.chapters.first().cloned());
 
-				// 加载章节内容
+				// 3. 加载章节内容
 				if let Some(ch_str) = &self.current_chapter {
+					// 因为 ch_str 已经是 "1", "2" 这种干净的数字字符串，直接 parse 即可
 					let ch_num = ch_str.parse().unwrap_or(1);
 					self.content = load_chapter_content(conn, book, ch_num);
 				} else {
 					self.content.clear();
 				}
 			} else {
-				// 当前版本没有书卷（极少情况）
 				self.chapters.clear();
 				self.current_chapter = None;
 				self.content.clear();
@@ -1538,29 +1506,33 @@ impl BibleApp {
 
 		// 确保数据库已经打开
 		if let Some(conn) = &self.conn {
-			// 加载章节列表
-			let mut chapters = load_chapters(conn, book_num);
-			chapters.sort_by_key(|c| chapter_number(c));
-			self.chapters = chapters;
+			// 1. 加载章节列表（现在 chapters_vec 是 Vec<i32>）
+			let mut chapters_vec = load_chapters(conn, book_num);
 
-			// 自动选择第一章
-			if let Some(first_chapter) = self.chapters.first().cloned() {
-				self.current_chapter = Some(first_chapter.clone());
+			// 2. 直接对整数进行排序（比字符串排序快得多）
+			chapters_vec.sort(); 
 
-				let ch_num = first_chapter.parse().unwrap_or(1);
+			// 3. 将 Vec<i32> 转换为 Vec<String> 赋值给 self.chapters
+			self.chapters = chapters_vec.iter().map(|c| c.to_string()).collect();
+
+			// 4. 自动选择第一章
+			if let Some(first_chapter_str) = self.chapters.first().cloned() {
+				self.current_chapter = Some(first_chapter_str.clone());
+
+				// 5. 将字符串解析回数字用于加载内容
+				let ch_num = first_chapter_str.parse().unwrap_or(1);
 				self.content = load_chapter_content(conn, book_num, ch_num);
 
 				// 清理布局与状态
 				self.content_layout = None;
 				self.last_state = None;
 			} else {
-				// 该书没有章节（极少情况）
 				self.current_chapter = None;
 				self.content.clear();
 				self.content_layout = None;
 				self.last_state = None;
 			}
-		} 
+		}
 	}
 
 	fn on_chapter_selected(&mut self, book_num: i32, ch: String) {
@@ -1626,9 +1598,16 @@ impl BibleApp {
 		if let (Some(book_id), Some(ch)) = (book, chapter) {
 			let ch_num = ch.parse().unwrap_or(1);
 			if let Some(conn) = &self.conn {
-				let mut chapters = load_chapters(conn, book_id);
-				chapters.sort_by_key(|c| chapter_number(c));
-				self.chapters = chapters;
+				// 1. 获取 Vec<i32>
+				let mut chapters_int = load_chapters(conn, book_id);
+
+				// 2. 直接对整数排序（比字符串排序快且安全）
+				chapters_int.sort(); 
+
+				// 3. 转换类型并赋值给 self.chapters (Vec<String>)
+				self.chapters = chapters_int.iter().map(|c| c.to_string()).collect();
+
+				// 4. 加载内容
 				self.content = load_chapter_content(conn, book_id, ch_num);
 			}
 		}
@@ -1713,6 +1692,8 @@ impl BibleApp {
 			self.show_notes_list_window(ctx, &colors);
 			self.import_export_window(ctx, &colors);
 			self.show_parallel_window(ctx);
+			//self.draw_font_size_window(ctx);
+			self.font_size_popup(ctx,&colors);
     }
 }
 
