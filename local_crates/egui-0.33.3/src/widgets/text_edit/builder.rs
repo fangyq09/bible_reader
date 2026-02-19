@@ -759,8 +759,8 @@ impl TextEdit<'_> {
             painter.galley(galley_pos, galley.clone(), text_color);
 
             if has_focus && let Some(cursor_range) = state.cursor.range(&galley) {
-                let primary_cursor_rect = cursor_rect(&galley, &cursor_range.primary, row_height)
-                    .translate(galley_pos.to_vec2());
+							let primary_cursor_rect = cursor_rect(&galley, &cursor_range.primary, row_height)
+								.translate(galley_pos.to_vec2());
 
                 if response.changed() || selection_changed {
                     // Scroll to keep primary cursor in view:
@@ -787,25 +787,54 @@ impl TextEdit<'_> {
                         );
                     }
 
-                    // Set IME output (in screen coords) when text is editable and visible
-                    let to_global = ui
-                        .ctx()
-                        .layer_transform_to_global(ui.layer_id())
-                        .unwrap_or_default();
+                    //// Set IME output (in screen coords) when text is editable and visible
+                    //let to_global = ui
+                    //    .ctx()
+                    //    .layer_transform_to_global(ui.layer_id())
+                    //    .unwrap_or_default();
 
-                    ui.ctx().output_mut(|o| {
-                        o.ime = Some(crate::output::IMEOutput {
-                            rect: to_global * rect,
-                            cursor_rect: to_global * primary_cursor_rect,
-                        });
-                    });
-                }
-            }
+                    //ui.ctx().output_mut(|o| {
+                    //    o.ime = Some(crate::output::IMEOutput {
+                    //        rect: to_global * rect,
+                    //        cursor_rect: to_global * primary_cursor_rect,
+                    //    });
+                    //});
+										//修改补丁
+										let layer_origin = ui.painter().clip_rect().min;
+										let cursor_pos = layer_origin + primary_cursor_rect.min.to_vec2();
+
+										let final_x = if primary_cursor_rect.min.x > ui.min_rect().width() {
+											primary_cursor_rect.min.x 
+										} else {
+											cursor_pos.x
+										};
+
+										let is_multiline = ui.min_rect().height() > 35.0; 
+
+										let y_offset = if is_multiline {
+											-15.0 
+										} else {
+											20.0 
+										};
+
+										let final_rect = crate::Rect::from_min_size(
+											emath::pos2(final_x + 1.0, cursor_pos.y + y_offset), 
+											primary_cursor_rect.size()
+										);
+
+										ui.ctx().output_mut(|o| {
+											o.ime = Some(crate::output::IMEOutput {
+												rect: final_rect,
+												cursor_rect: final_rect,
+											});
+										});
+								}
+						}
         }
 
         // Ensures correct IME behavior when the text input area gains or loses focus.
         if state.ime_enabled && (response.gained_focus() || response.lost_focus()) {
-            state.ime_enabled = false;
+            //state.ime_enabled = false; //注释这行，修改处2
             if let Some(mut ccursor_range) = state.cursor.char_range() {
                 ccursor_range.secondary.index = ccursor_range.primary.index;
                 state.cursor.set_char_range(Some(ccursor_range));
@@ -1092,7 +1121,7 @@ fn events(
                         state.ime_enabled = false;
 
                         if !prediction.is_empty()
-													//他妈的傻叉作者，加这两句导致输入法不能用
+													//他妈的傻叉作者，加这两句导致输入法不能用，修改处1
                             //&& cursor_range.secondary.index
                             //    == state.ime_cursor_range.secondary.index
                         {
