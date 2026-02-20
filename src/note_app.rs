@@ -5,7 +5,6 @@ use crate::notes::{Notedb,save_note,delete_note};
 pub struct NoteApp {
 		pub note: Notedb,
 }
-
 fn note_visuals() -> egui::Visuals {
 	let mut v = egui::Visuals::light();
 
@@ -19,18 +18,18 @@ fn note_visuals() -> egui::Visuals {
 		egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 220, 215));
 
 	// ====== 普通控件 ======
-	v.widgets.inactive.bg_fill =
-		egui::Color32::from_rgb(242, 242, 238);
+	v.widgets.inactive.bg_fill = egui::Color32::from_rgb(242, 242, 238);
+	//v.widgets.inactive.bg_fill = egui::Color32::from_rgb(248, 248, 245);
 
-	v.widgets.hovered.bg_fill =
-		egui::Color32::from_rgb(230, 230, 225);
+	v.widgets.hovered.bg_fill = egui::Color32::from_rgb(230, 230, 225);
 
-	v.widgets.active.bg_fill =
-		egui::Color32::from_rgb(220, 220, 215);
+	v.widgets.active.bg_fill = egui::Color32::from_rgb(220, 220, 215);
 
 	// ====== 输入框 ======
 	v.widgets.inactive.bg_stroke =
 		egui::Stroke::new(1.0, egui::Color32::from_rgb(200, 200, 195));
+
+	//v.widgets.inactive.bg_stroke = egui::Stroke::NONE; // 去掉默认边框
 
 	v.widgets.hovered.bg_stroke =
 		egui::Stroke::new(1.0, egui::Color32::from_rgb(180, 180, 175));
@@ -50,6 +49,37 @@ impl eframe::App for NoteApp {
 		ctx.set_visuals(note_visuals());
 
 		let note = &mut self.note;
+
+		egui::TopBottomPanel::bottom("note_bottom_panel").show(ctx, |ui| {
+			ui.add_space(5.0);
+			ui.horizontal(|ui| {
+				let btn_w = 80.0;
+				let btn_h = 28.0;
+				ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+					if ui.add_sized([btn_w, btn_h], egui::Button::new("🗑删除"))
+						.on_hover_cursor(egui::CursorIcon::Default)
+						.clicked() {
+						if let Err(e) = delete_note("notes", &note.id) {
+							eprintln!("删除笔记失败 id={}: {:?}", note.id, e);
+						} else {
+							println!("删除笔记 id={}", note.id);
+						}
+						ctx.request_repaint_of(egui::ViewportId::ROOT);
+						ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+					}
+				});
+				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+					if ui.add_sized([btn_w, btn_h], egui::Button::new("保存"))
+						.on_hover_cursor(egui::CursorIcon::Default)
+						.clicked() {
+						save_note("notes", note);
+						ctx.request_repaint_of(egui::ViewportId::ROOT);
+						ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+					}
+				});
+			});
+			ui.add_space(2.0);
+		});
 
 		egui::CentralPanel::default().show(ctx, |ui| {
 			let label_width = 90.0;
@@ -90,44 +120,21 @@ impl eframe::App for NoteApp {
 
 			ui.separator();
 
-			ScrollArea::vertical().show(ui, |ui| {
-				ui.add_sized(
-					[ui.available_width(), ui.available_height()],
-					egui::TextEdit::multiline(note.body.get_or_insert(String::new()))
-					//.font(egui::FontId::proportional(16.0))
-					.hint_text("笔记正文"),
-				);
-			}); 
+			ScrollArea::vertical()
+				.auto_shrink([false; 2]) // 允许在垂直方向填满空间
+				.show(ui, |ui| {
+					ui.add(
+						egui::TextEdit::multiline(note.body.get_or_insert(String::new()))
+						.hint_text("笔记正文")
+						.frame(false)
+						.desired_width(ui.available_width()) // 宽度铺满
+						.desired_rows(10) // 初始最小行数
+						.font(egui::FontId::proportional(16.0))
+					);
+
+				});
 			ui.separator();
 		});
 
-		egui::TopBottomPanel::bottom("note_bottom_panel").show(ctx, |ui| {
-			ui.add_space(5.0);
-			ui.horizontal(|ui| {
-				let btn_w = 80.0;
-				let btn_h = 28.0;
-				ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-					if ui.add_sized([btn_w, btn_h], egui::Button::new("🗑删除"))
-						.on_hover_cursor(egui::CursorIcon::Default)
-						.clicked() {
-						if let Err(e) = delete_note("notes", &note.id) {
-							eprintln!("删除笔记失败 id={}: {:?}", note.id, e);
-						} else {
-							println!("删除笔记 id={}", note.id);
-						}
-						ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-					}
-				});
-				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-					if ui.add_sized([btn_w, btn_h], egui::Button::new("保存"))
-						.on_hover_cursor(egui::CursorIcon::Default)
-						.clicked() {
-						save_note("notes", note);
-						ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-					}
-				});
-			});
-			ui.add_space(2.0);
-		});
 	}
 }

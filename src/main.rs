@@ -30,6 +30,7 @@ use crate::utils::{
 use crate::notes::{Notedb};
 use crate::note_app::NoteApp;
 
+
 #[derive(PartialEq, Clone)]
 struct ContentState {
     version: String,
@@ -102,6 +103,7 @@ struct BibleApp {
 	pub parallel_window_pos: Option<egui::Pos2>,
 	body_font_size: f32,
 	show_font_size_popup: bool,
+	was_focused: bool,
 }
 //中文字体
 pub fn configure_chinese_font(ctx: &egui::Context) {
@@ -230,6 +232,7 @@ impl BibleApp {
 				parallel_window_pos: None,
 				body_font_size: 16.0,
 				show_font_size_popup: false,
+				was_focused: true,
 			};
 
 			// 若没有任何圣经数据库，就不加载，直接返回 app
@@ -299,74 +302,168 @@ impl BibleApp {
 
 // 搜索经文
 impl BibleApp {
-fn perform_search(&mut self) -> rusqlite::Result<()> {
+	//pub fn perform_search(&mut self) -> rusqlite::Result<()> {
+	//	self.search_results.clear();
+	//	self.text_cache.clear();
+	//	self.highlight_query = None;
+
+	//	self.open_current_db();
+	//	let conn = match self.conn.as_ref() {
+	//		Some(c) => c,
+	//		None => return Ok(()),
+	//	};
+
+	//	let query = self.search_query.trim();
+	//	if query.is_empty() { return Ok(()); }
+
+	//	// 1. 拆分过滤器 (书名:关键词)
+	//	let separators = [':', '：', '&'];
+	//	let mut book_filter = "";
+	//	let mut content_filter = query;
+
+	//	for (i, c) in query.char_indices() {
+	//		if separators.contains(&c) {
+	//			book_filter = query[..i].trim();
+	//			content_filter = query[i + c.len_utf8()..].trim();
+	//			break;
+	//		}
+	//	}
+
+	//	self.highlight_query = Some(content_filter.to_string());
+
+	//	// 2. 更新后的 SQL：直接匹配 book_num
+	//	// 这里 JOIN books 是为了拿到中文书名 (b.human)
+	//	let mut sql = String::from(
+	//		"SELECT b.number, b.human, c.chapter_num, c.content 
+	//			 FROM chapters c 
+	//			 JOIN books b ON c.book_num = b.number 
+	//			 WHERE c.content LIKE ?1"
+	//	);
+
+	//	if !book_filter.is_empty() {
+	//		sql.push_str(" AND b.human LIKE ?2");
+	//	}
+
+	//	// 数据库层排序：利用 book_num 和 chapter_num 的复合索引
+	//	sql.push_str(" ORDER BY c.book_num, c.chapter_num");
+
+	//	let content_like = format!("%{}%", content_filter);
+	//	let mut stmt = conn.prepare(&sql)?;
+
+	//	// 3. 执行查询并收集结果 (解决闭包类型不匹配问题)
+	//	let rows: Vec<(i32, String, i32, String)> = if !book_filter.is_empty() {
+	//		let b_like = format!("%{}%", book_filter);
+	//		stmt.query_map([content_like, b_like], |row| {
+	//			Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+	//		})?.map(|r| r.unwrap()).collect()
+	//	} else {
+	//		stmt.query_map([content_like], |row| {
+	//			Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+	//		})?.map(|r| r.unwrap()).collect()
+	//	};
+
+	//	// 4. 处理预览片段和缓存
+	//	for (b_num, b_human, c_num, content) in rows {
+	//		// 在整章内容中寻找匹配行作为预览
+	//		let snippet = content
+	//			.lines()
+	//			.find(|l| l.contains(content_filter))
+	//			.unwrap_or(&content)
+	//			.trim()
+	//			.to_string();
+
+	//		self.search_results.push((b_num, b_human, c_num, snippet));
+
+	//		// 将整章文本存入缓存，用户点击搜索结果时无需再次读取数据库
+	//		self.text_cache.insert((b_num, c_num), content);
+	//	}
+
+	//	Ok(())
+	//}
+	pub fn perform_search(&mut self) -> rusqlite::Result<()> {
     self.search_results.clear();
     self.text_cache.clear();
-		self.highlight_query = None;
+    self.highlight_query = None;
 
-		self.open_current_db();
-		let conn = self.conn.as_ref().unwrap();
+    self.open_current_db();
+    let conn = match self.conn.as_ref() {
+        Some(c) => c,
+        None => return Ok(()),
+    };
 
     let query = self.search_query.trim();
     if query.is_empty() { return Ok(()); }
 
+    // 1. 拆分过滤器 (书名:关键词 或 范围:关键词)
+    let separators = [':', '：', '&'];
+    let mut book_filter = "";
+    let mut content_filter = query;
+    let mut range_filter: Option<(i32, i32)> = None; // (min, max)
 
-		//搜索书卷名与关键词的分隔符
-		let separators = [':', '：', '&'];
-		let mut book_filter = "";
-		let mut content_filter = query;
+    for (i, c) in query.char_indices() {
+        if separators.contains(&c) {
+            let prefix = query[..i].trim().to_lowercase();
+            content_filter = query[i + c.len_utf8()..].trim();
+            
+            // 匹配新旧约快捷键
+            match prefix.as_str() {
+                "new" | "新" | "新约" => range_filter = Some((40, 66)),
+                "old" | "旧" | "旧约" => range_filter = Some((1, 39)),
+                _ => book_filter = query[..i].trim(), // 否则视为书名过滤
+            }
+            break;
+        }
+    }
 
-		for (i, c) in query.char_indices() {
-			if separators.contains(&c) {
-				// i 是字节索引，c.len_utf8() 是字符长度
-				book_filter = query[..i].trim();
-				content_filter = query[i + c.len_utf8()..].trim();
-				break;
-			}
-		}
+    self.highlight_query = Some(content_filter.to_string());
 
-		self.highlight_query = Some(content_filter.to_string());
-
+    // 2. 构造 SQL
     let mut sql = String::from(
-        "
-        SELECT b.number, b.human, c.reference_osis, c.content
-        FROM chapters c
-        JOIN books b ON c.reference_osis LIKE b.osis || '.%'
-        WHERE c.content LIKE ?1
-        "
+        "SELECT b.number, b.human, c.chapter_num, c.content 
+         FROM chapters c 
+         JOIN books b ON c.book_num = b.number 
+         WHERE c.content LIKE ?1"
     );
 
-    if !book_filter.is_empty() {
-        sql.push_str(" AND b.human LIKE ?2 ");
+    if range_filter.is_some() {
+        sql.push_str(" AND b.number BETWEEN ?2 AND ?3");
+    } else if !book_filter.is_empty() {
+        sql.push_str(" AND b.human LIKE ?2");
     }
+    
+    sql.push_str(" ORDER BY c.book_num, c.chapter_num");
 
-    sql.push_str(" ORDER BY b.number, c.reference_osis ");
-
+    let content_like = format!("%{}%", content_filter);
     let mut stmt = conn.prepare(&sql)?;
 
-    let raw_rows: Vec<(i32, String, String, String)> = if !book_filter.is_empty() {
-        stmt.query_map(
-            rusqlite::params![format!("%{}%", content_filter), format!("%{}%", book_filter)],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        )?.map(|r| r.unwrap()).collect()
+    // 3. 执行查询
+    let rows: Vec<(i32, String, i32, String)> = if let Some((min, max)) = range_filter {
+        stmt.query_map([content_like, min.to_string(), max.to_string()], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?.map(|r| r.unwrap()).collect()
+    } else if !book_filter.is_empty() {
+        let b_like = format!("%{}%", book_filter);
+        stmt.query_map([content_like, b_like], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?.map(|r| r.unwrap()).collect()
     } else {
-        stmt.query_map(
-            rusqlite::params![format!("%{}%", content_filter)],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        )?.map(|r| r.unwrap()).collect()
+        stmt.query_map([content_like], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?.map(|r| r.unwrap()).collect()
     };
 
-    for (book_num, book_name, reference_osis, content) in raw_rows {
-        let chap_num = reference_osis.split('.').last().unwrap_or("0").parse::<i32>().unwrap_or(0);
-        let snippet = content.lines().find(|l| l.contains(content_filter)).unwrap_or(&content).to_string();
-        self.search_results.push((book_num, book_name.clone(), chap_num, snippet));
-        self.text_cache.entry((book_num, chap_num)).or_insert(content);
-    }
+    // 4. 处理预览片段和缓存 (保持不变)
+    for (b_num, b_human, c_num, content) in rows {
+        let snippet = content
+            .lines()
+            .find(|l| l.contains(content_filter))
+            .unwrap_or(&content)
+            .trim()
+            .to_string();
 
-    self.search_results.sort_by(|a, b| {
-        let book_cmp = a.0.cmp(&b.0);
-        if book_cmp == std::cmp::Ordering::Equal { a.2.cmp(&b.2) } else { book_cmp }
-    });
+        self.search_results.push((b_num, b_human, c_num, snippet));
+        self.text_cache.insert((b_num, c_num), content);
+    }
 
     Ok(())
 }
@@ -1097,7 +1194,10 @@ impl BibleApp {
 //搜索结果栏目
 impl BibleApp {
 	fn ui_search_window(&mut self, ctx: &egui::Context, colors: &ThemeColors,) {
-		if !self.show_search_window || self.search_results.is_empty() {
+		//if !self.show_search_window || self.search_results.is_empty() {
+		//	return;
+		//}
+		if !self.show_search_window {
 			return;
 		}
 
@@ -1143,6 +1243,33 @@ impl BibleApp {
 				ui.separator();
 
 				egui::ScrollArea::vertical().show(ui, |ui| {
+					if self.search_results.is_empty() {
+						ui.vertical_centered(|ui| {
+						//ui.horizontal(|ui| {
+							//ui.label(egui::RichText::new("查无此项: ").color(egui::Color32::GRAY));
+							//ui.label(egui::RichText::new(&self.search_query).color(egui::Color32::RED).italics());
+							let mut job = egui::text::LayoutJob::default();
+							let font_id = egui::FontId::proportional(14.0);
+
+							// 灰色部分
+							job.append("查无此项: ", 0.0, egui::TextFormat {
+								color: egui::Color32::GRAY,
+								font_id: font_id.clone(),
+								..Default::default()
+							});
+
+							// 红色部分
+							job.append(&self.search_query, 0.0, egui::TextFormat {
+								color: egui::Color32::RED,
+								font_id,
+								italics: true,
+								..Default::default()
+							});
+
+							ui.label(job); // 作为一个整体显示，自动居中
+						});
+						return; // 提前结束闭包，下方列表逻辑不再执行
+					} 
 					for (book, book_name, chap_num, snippet) in &self.search_results {
 						let mut job = LayoutJob::default();
 						let body_font_id = egui::FontId::proportional(14.0);
@@ -1195,6 +1322,15 @@ impl BibleApp {
 //文本显示区
 impl BibleApp {
 	fn ui_content_panel(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+
+		let is_focused = ctx.input(|i| i.viewport().focused.unwrap_or(false));
+		let force_refresh = is_focused && !self.was_focused;
+		self.was_focused = is_focused;
+		if force_refresh {
+			self.last_appended_notes_state = None;
+			self.last_state = None;
+			self.content_layout = None;
+		}
 
 		let current_state = ContentState {
 			version: self.current_version.clone(),

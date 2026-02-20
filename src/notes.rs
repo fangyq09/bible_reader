@@ -81,18 +81,6 @@ pub fn show_appended_notes(
 }
 
 impl BibleApp {
-	//pub fn get_appended_notes(&mut self){
-	//    let book_num = match self.current_book { Some(b) => b, None => return };
-	//    let chapter = match &self.current_chapter { Some(c) => c.clone(), None => return };
-	//		let version = self.current_version.clone();
-	//
-	//    let current_key = (version, book_num, chapter.clone());
-	//
-	//    if self.last_appended_notes_chapter != Some(current_key.clone()) {
-	//        self.appended_notes_current = self.load_notes("notes", "append");
-	//        self.last_appended_notes_chapter = Some(current_key);
-	//    }
-	//}
 	pub fn get_appended_notes(&mut self) {
 		let current_state = match self.current_nav_state() {
 			Some(s) => s,
@@ -155,6 +143,9 @@ impl BibleApp {
 									} else {
 										self.current_note = None;
 										self.note_window_open = false;
+										self.last_appended_notes_state = None;
+										self.last_state = None;     
+										self.content_layout = None;
 									}
 								}
 							}
@@ -165,7 +156,7 @@ impl BibleApp {
 								ui.label(
 									egui::RichText::new(format!("创建: {}", created))
 									//.size(10.0)
-                                    .text_style(font_size_tiny())
+									.text_style(font_size_tiny())
 									.color(colors.comment_text_color)
 								);
 							}
@@ -186,7 +177,7 @@ impl BibleApp {
 								ui.label(
 									egui::RichText::new(format!("修改: {}", updated))
 									//.size(10.0)
-                                    .text_style(font_size_tiny())
+									.text_style(font_size_tiny())
 									.color(colors.comment_text_color)
 								);
 							}
@@ -351,7 +342,6 @@ impl BibleApp {
 				}
     }
 }
-
 
 //保存笔记
 pub fn save_note(category: &str, note: &Notedb) {
