@@ -1302,12 +1302,17 @@ impl BibleApp {
 		if let Some((book, chap)) = chosen {
 			////self.on_chapter_selected(book, chap);
 			let ch_num = chap.parse::<i32>().unwrap_or(1);
+			let abbr = book_number_to_abbr(book); 
+			self.chapter_panel_title = format!("章节（{}）", abbr);
 			if let Some(content) = self.text_cache.get(&(book, ch_num)).cloned() {
 				self.record_jump();
 				self.current_book = Some(book);
 				self.current_chapter = Some(ch_num.to_string());
 				self.content = content;
 				self.show_highlight = true; 
+
+				//self.content_layout = None;
+				//self.last_state = None;
 			} else {
 				self.on_chapter_selected(book, ch_num.to_string());
 			}
