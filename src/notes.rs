@@ -6,6 +6,8 @@ use crate::ParallelVerse;
 use crate::utils::{version_display_name,sort_versions_chinese_first};
 use std::fs;
 use rfd::FileDialog;
+//use libsql::params;
+//use rusqlite::Connection;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Notedb {
@@ -43,6 +45,69 @@ struct SearchTerm {
 #[derive(Debug)]
 struct SearchQuery {
     terms: Vec<SearchTerm>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AppConfig {
+    pub sync_enabled: bool,
+    pub turso_url: String,
+    pub turso_token: String,
+}
+
+impl AppConfig {
+	pub fn load() -> Self {
+		// 1. 获取用户根目录 (e.g., /home/fang)
+		let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+		// 2. 拼接完整的 Linux 配置文件路径
+		let config_path = std::path::Path::new(&home)
+			.join(".config")
+			.join("bible_reader")
+			.join("config.json");
+
+		if let Ok(content) = std::fs::read_to_string(&config_path) {
+			if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
+				return config;
+			}
+		}
+
+		// 如果找不到或解析失败，至少在终端报个信，别死得不明不白
+		//eprintln!("警告: 未能加载配置文件 {:?}, 使用默认配置", config_path);
+		Self::default()
+	}
+	pub fn save(&self) -> std::io::Result<()> {
+		// 1. 获取路径：确保和 load 函数读取的是同一个地方
+		let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+		let config_dir = std::path::Path::new(&home)
+			.join(".config")
+			.join("bible_reader");
+
+		// 2. 自动创建目录：如果文件夹不存在就创建（防止第一次运行报错）
+		if !config_dir.exists() {
+			std::fs::create_dir_all(&config_dir)?;
+		}
+
+		let config_path = config_dir.join("config.json");
+
+		// 3. 序列化：将内存里的内存转成漂亮的 JSON 字符串
+		let content = serde_json::to_string_pretty(self).map_err(|e| {
+			std::io::Error::new(std::io::ErrorKind::Other, e)
+		})?;
+
+		// 4. 写入：覆盖旧的 config.json
+		std::fs::write(config_path, content)?;
+
+		Ok(())
+	}
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            sync_enabled: false,
+            turso_url: "".into(),
+            turso_token: "".into(),
+        }
+    }
 }
 
 //追加笔记样式
@@ -116,15 +181,47 @@ impl BibleApp {
 								if !reference.is_empty() {
 									ui.label(
 										egui::RichText::new(format!("引用：{}", reference))
-										//.size(10.0)
-                                        .text_style(font_size_tiny())
+										.text_style(font_size_tiny())
 										.color(colors.comment_text_color),
 									);
 								}
 							}
 						});
 						ui.separator();
-						ui.label(note.body.as_deref().unwrap_or("<无内容>"));
+						let body_text = note.body.as_deref().unwrap_or("<无内容>");
+						//ui.label(body_text);
+						//------------------------------
+						let label_res = ui.add(egui::Label::new(body_text).selectable(true));
+						// 手动检测边缘拖拽实现滚动
+						if label_res.dragged() {
+							if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+								let scroll_rect = ui.clip_rect(); // 获取当前滚动区域的可见范围
+								let mut scroll_delta = 0.0;
+								let scroll_speed = 20.0; // 滚动速度
+								if pointer_pos.y < scroll_rect.min.y + 20.0 {
+									// 鼠标拖到了滚动区顶部边缘
+									scroll_delta = scroll_speed;
+								} else if pointer_pos.y > scroll_rect.max.y - 20.0 {
+									// 鼠标拖到了滚动区底部边缘
+									scroll_delta = -scroll_speed;
+								}
+								if scroll_delta != 0.0 {
+									ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
+								}
+							}
+						}
+						//------------------------------
+
+						ui.add_space(2.0); // 给按钮留一点顶部间距
+						ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+							if ui.button("📋 复制笔记")
+								.on_hover_text("点击复制笔记正文")
+									.clicked() 
+							{
+								ui.ctx().copy_text(body_text.to_string());
+							}
+						});
+						ui.add_space(4.0); // 给按钮留一点底部部间距
 					});
 
 					ui.add_space(20.0);
@@ -141,6 +238,39 @@ impl BibleApp {
 									if let Err(e) = delete_note("notes", &note_id) {
 										eprintln!("删除笔记失败 id={}: {:?}", note_id, e);
 									} else {
+										// 判断同步配置
+										let cfg = AppConfig::load();
+										if cfg.sync_enabled && !cfg.turso_url.is_empty() && !cfg.turso_token.is_empty() {
+											let cfg_clone = cfg.clone();
+											let id_clone = note_id.clone();
+											let ctx_clone = ctx.clone();
+											tokio::spawn(async move {
+												let conn_result = crate::notes::get_or_create_conn(
+													None, 
+													cfg_clone.turso_url.clone(), 
+													cfg_clone.turso_token.clone()
+												).await;
+												//match delete_from_turso("notes", &id_clone, &self.conn).await {
+												//	Ok(_) => {
+												//		println!("✅ 云端同步删除成功 id={}", id_clone);
+												//		ctx_clone.request_repaint(); 
+												//	}
+												//	Err(e) => eprintln!("❌ 云端同步删除失败: {:?}", e),
+												//}
+												match conn_result {
+													Ok(conn) => {
+														match delete_from_turso("notes", &id_clone, &conn).await {
+															Ok(_) => {
+																println!("✅ 云端同步删除成功 id={}", id_clone);
+																ctx_clone.request_repaint(); 
+															}
+															Err(e) => eprintln!("❌ 云端同步删除失败: {:?}", e),
+														}
+													}
+													Err(e) => eprintln!("❌ 无法建立云端连接: {:?}", e),
+												}
+											});
+										}
 										self.current_note = None;
 										self.note_window_open = false;
 										self.last_appended_notes_state = None;
@@ -153,8 +283,9 @@ impl BibleApp {
 							ui.add_space(15.0);
 
 							if let Some(created) = &note.created_at {
+								let date_only = if created.len() >= 10 { &created[0..10] } else { created };
 								ui.label(
-									egui::RichText::new(format!("创建: {}", created))
+									egui::RichText::new(format!("创建: {}", date_only))
 									//.size(10.0)
 									.text_style(font_size_tiny())
 									.color(colors.comment_text_color)
@@ -174,8 +305,9 @@ impl BibleApp {
 
 							// 修改时间
 							if let Some(updated) = &note.updated_at {
+								let date_only = if updated.len() >= 10 { &updated[0..10] } else { updated };
 								ui.label(
-									egui::RichText::new(format!("修改: {}", updated))
+									egui::RichText::new(format!("修改: {}", date_only))
 									//.size(10.0)
 									.text_style(font_size_tiny())
 									.color(colors.comment_text_color)
@@ -292,7 +424,7 @@ impl BibleApp {
 								.hint_text(
 									egui::RichText::new("搜索笔记")
 									.color(colors.comment_text_color)
-                                    .text_style(egui::TextStyle::Small),
+									.text_style(egui::TextStyle::Small),
 									//.size(14.0),
 								)
 								.desired_width(f32::INFINITY),
@@ -378,7 +510,8 @@ pub fn save_note(category: &str, note: &Notedb) {
 				return;
 		}
 
-		let now = Utc::now().format("%Y-%m-%d").to_string();
+		//let now = Utc::now().format("%Y-%m-%d").to_string();
+		let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
 		let insert_sql = format!(
 				"INSERT OR REPLACE INTO {} (
@@ -939,4 +1072,454 @@ impl BibleApp {
 			}
 		}
 	}
+}
+
+	//Turso同步
+pub async fn get_or_create_conn(
+    cache: Option<std::sync::Arc<libsql::Connection>>,
+    url: String,
+    token: String,
+) -> Result<std::sync::Arc<libsql::Connection>, Box<dyn std::error::Error + Send + Sync>> {
+    // 1. 如果缓存有效，直接复用
+    if let Some(conn) = cache {
+        return Ok(conn);
+    }
+
+    // 2. 如果缓存为空，则创建新连接
+    let db = libsql::Builder::new_remote(url, token).build().await?;
+    let conn = std::sync::Arc::new(db.connect()?);
+    
+    Ok(conn)
+}
+//pub async fn sync_to_turso(
+//    category: &str, 
+//    note: &Notedb, 
+//    config: &AppConfig
+//) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//    // 1. 建立远程连接 (使用 Builder 模式)
+//    let db = libsql::Builder::new_remote(
+//			config.turso_url.clone(), 
+//			config.turso_token.clone()
+//			)
+//        .build()
+//        .await?;
+//    let conn = db.connect()?;
+//
+//    // 3. 插入或更新数据
+//    // 显式列出字段名可以防止未来数据库表结构微调时出错
+//    let insert_sql = format!(
+//        "INSERT OR REPLACE INTO {} (
+//            id, book_num, book_name, chapter, verse_start, char_offset,
+//            title, keywords, reference, body, subject, version, created_at, updated_at
+//        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+//        category
+//    );
+//
+//    // 重点修改：libsql 的 params! 宏不需要字段再额外 .clone()，
+//    // 因为 params 会获取值的副本或引用。
+//    conn.execute(&insert_sql, params![
+//        note.id.as_str(),
+//        note.book_num,
+//        note.book_name.as_deref(),
+//        note.chapter.as_deref(),
+//        note.verse_start,
+//        note.char_offset,
+//        note.title.as_deref(),
+//        note.keywords.as_deref(),
+//        note.reference.as_deref(),
+//        note.body.as_deref(),
+//        note.subject.as_deref(),
+//        note.version.as_deref(),
+//        note.created_at.as_deref(),
+//        note.updated_at.as_deref(),
+//    ]).await?;
+//
+//    Ok(())
+//}
+pub async fn sync_to_turso(
+    category: &str, 
+    note: &Notedb, 
+    conn: &libsql::Connection, // 修改点
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let insert_sql = format!(
+        "INSERT OR REPLACE INTO {} (
+            id, book_num, book_name, chapter, verse_start, char_offset,
+            title, keywords, reference, body, subject, version, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        category
+    );
+
+    conn.execute(&insert_sql, libsql::params![
+        note.id.as_str(),
+        note.book_num,
+        note.book_name.as_deref(),
+        note.chapter.as_deref(),
+        note.verse_start,
+        note.char_offset,
+        note.title.as_deref(),
+        note.keywords.as_deref(),
+        note.reference.as_deref(),
+        note.body.as_deref(),
+        note.subject.as_deref(),
+        note.version.as_deref(),
+        note.created_at.as_deref(),
+        note.updated_at.as_deref(),
+    ]).await?;
+
+    Ok(())
+}
+
+
+//pub async fn delete_from_turso(
+//    category: &str, 
+//    note_id: &str, 
+//    config: &AppConfig
+//) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//    let db = libsql::Builder::new_remote(
+//        config.turso_url.clone(), 
+//        config.turso_token.clone()
+//    )
+//    .build()
+//    .await?;
+//    let conn = db.connect()?;
+//
+//    let sql = format!("DELETE FROM {} WHERE id = ?1", category);
+//    conn.execute(&sql, [note_id]).await?;
+//    
+//    Ok(())
+//}
+pub async fn delete_from_turso(
+    category: &str, 
+    note_id: &str, 
+    conn: &libsql::Connection, // 修改点
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let sql = format!("DELETE FROM {} WHERE id = ?1", category);
+    conn.execute(&sql, [note_id]).await?;
+    Ok(())
+}
+
+//pub async fn sync_all_notes(
+//    category: &str, 
+//    config: &AppConfig
+//) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//    // 1. 获取本地数据库路径
+//    let notes_dir = dirs::data_dir().unwrap().join("bible_reader/notes");
+//    let db_path = notes_dir.join("note.db");
+//    if !db_path.exists() { return Ok(()); }
+//
+//		// --- 修改点 1: 在一个独立的作用域里把本地数据捞完，然后让数据库对象立即释放 ---
+//    let local_notes: Vec<Notedb> = {
+//        let local_conn = rusqlite::Connection::open(&db_path)?;
+//        let mut stmt = local_conn.prepare(&format!(
+//            "SELECT id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at FROM {}", 
+//            category
+//        ))?;
+//        
+//        let iter = stmt.query_map([], |row| {
+//            Ok(Notedb {
+//                id: row.get(0)?,
+//                book_num: row.get(1)?,
+//                book_name: row.get(2)?,
+//                chapter: row.get(3)?,
+//                verse_start: row.get(4)?,
+//                char_offset: row.get(5)?,
+//                title: row.get(6)?,
+//                keywords: row.get(7)?,
+//                reference: row.get(8)?,
+//                body: row.get(9)?,
+//                subject: row.get(10)?,
+//                version: row.get(11)?,
+//                created_at: row.get(12)?,
+//                updated_at: row.get(13)?,
+//            })
+//        })?;
+//				// 立即 collect 进 Vec，脱离对 rusqlite 迭代器的依赖
+//        iter.filter_map(|n| n.ok()).collect()
+//    };
+//
+//				// --- 修改点 2: 云端对比逻辑不变，但现在可以安全使用 await 了 ---
+//    let db = libsql::Builder::new_remote(config.turso_url.clone(), config.turso_token.clone()).build().await?;
+//    let remote_conn = db.connect()?;
+//    
+//    let mut remote_notes = std::collections::HashMap::new();
+//    let mut remote_rows = remote_conn.query(&format!("SELECT id, updated_at FROM {}", category), ()).await?;
+//    while let Some(row) = remote_rows.next().await? {
+//        let id: String = row.get(0)?;
+//        let updated_at: Option<String> = row.get(1)?;
+//        remote_notes.insert(id, updated_at);
+//    }
+//
+//
+//    // 4. 开始逻辑对比
+//    for local_note in local_notes {
+//        let remote_updated_at = remote_notes.get(&local_note.id).cloned().flatten();
+//
+//        match remote_updated_at {
+//            Some(r_time) => {
+//                let l_time = local_note.updated_at.as_deref().unwrap_or("");
+//                // 情况 A: 本地比云端新 -> 上传覆盖云端
+//                if l_time > r_time.as_str() {
+//                    println!("↑ 本地更新，上传笔记: {}", local_note.id);
+//                    let _ = sync_to_turso(category, &local_note, config).await;
+//                } 
+//                // 情况 B: 云端比本地新 -> 下载覆盖本地 (这里需要你实现一个从远程读取完整 Note 的逻辑)
+//                else if l_time < r_time.as_str() {
+//                    println!("↓ 云端更新，准备下载: {}", local_note.id);
+//                    if let Some(remote_note) = fetch_single_note_from_turso(category, &local_note.id, config).await? {
+//                         save_note_pure_local(category, &remote_note); // 仅保存到本地，不触发上传
+//                    }
+//                }
+//            }
+//            None => {
+//                // 情况 C: 云端没有 -> 上传
+//                let _ = sync_to_turso(category, &local_note, config).await;
+//            }
+//        }
+//        // 处理完后从 HashMap 移除，剩下的就是“本地没有但云端有”的笔记
+//        remote_notes.remove(&local_note.id);
+//    }
+//
+//    // 5. 处理本地完全缺失的笔记（从云端下载）
+//    for (id, _) in remote_notes {
+//        if let Some(remote_note) = fetch_single_note_from_turso(category, &id, config).await? {
+//            save_note_pure_local(category, &remote_note);
+//        }
+//    }
+//
+//    Ok(())
+//}
+//
+
+pub async fn sync_all_notes(
+    category: &str, 
+		conn: &libsql::Connection,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+	// 1. 获取本地数据库路径
+	let notes_dir = dirs::data_dir().unwrap().join("bible_reader/notes");
+	let db_path = notes_dir.join("note.db");
+	if !db_path.exists() { return Ok(()); }
+
+	// --- 修改点 1: 在一个独立的作用域里把本地数据捞完，然后让数据库对象立即释放 ---
+	let local_notes: Vec<Notedb> = {
+		let local_conn = rusqlite::Connection::open(&db_path)?;
+		let mut stmt = local_conn.prepare(&format!(
+				"SELECT id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at FROM {}", 
+				category
+		))?;
+
+		let iter = stmt.query_map([], |row| {
+			Ok(Notedb {
+				id: row.get(0)?,
+				book_num: row.get(1)?,
+				book_name: row.get(2)?,
+				chapter: row.get(3)?,
+				verse_start: row.get(4)?,
+				char_offset: row.get(5)?,
+				title: row.get(6)?,
+				keywords: row.get(7)?,
+				reference: row.get(8)?,
+				body: row.get(9)?,
+				subject: row.get(10)?,
+				version: row.get(11)?,
+				created_at: row.get(12)?,
+				updated_at: row.get(13)?,
+			})
+		})?;
+		// 立即 collect 进 Vec，脱离对 rusqlite 迭代器的依赖
+		iter.filter_map(|n| n.ok()).collect()
+	};
+
+	// 2. 获取云端列表 (直接使用传入的 conn)
+	let mut remote_notes = std::collections::HashMap::new();
+	let mut remote_rows = conn.query(&format!("SELECT id, updated_at FROM {}", category), ()).await?;
+	while let Some(row) = remote_rows.next().await? {
+		let id: String = row.get(0)?;
+		let updated_at: Option<String> = row.get(1)?;
+		remote_notes.insert(id, updated_at);
+	}
+
+	// 4. 开始逻辑对比
+	for local_note in local_notes {
+		let remote_updated_at = remote_notes.get(&local_note.id).cloned().flatten();
+
+		match remote_updated_at {
+			Some(r_time) => {
+				let l_time = local_note.updated_at.as_deref().unwrap_or("");
+				// 情况 A: 本地比云端新 -> 上传覆盖云端
+				if l_time > r_time.as_str() {
+					//println!("↑ 本地更新，上传笔记: {}", local_note.id);
+					let _ = sync_to_turso(category, &local_note, conn).await;
+				} 
+				// 情况 B: 云端比本地新 -> 下载覆盖本地 (这里需要你实现一个从远程读取完整 Note 的逻辑)
+				else if l_time < r_time.as_str() {
+					//println!("↓ 云端更新，准备下载: {}", local_note.id);
+					if let Some(remote_note) = fetch_single_note_from_turso(category, &local_note.id, conn).await? {
+						save_note_pure_local(category, &remote_note); // 仅保存到本地，不触发上传
+					}
+				}
+			}
+			None => {
+				// 情况 C: 云端没有 -> 上传
+				let _ = sync_to_turso(category, &local_note, conn).await;
+			}
+		}
+		// 处理完后从 HashMap 移除，剩下的就是“本地没有但云端有”的笔记
+		remote_notes.remove(&local_note.id);
+	}
+
+	// 5. 处理本地完全缺失的笔记（从云端下载）
+	for (id, _) in remote_notes {
+		if let Some(remote_note) = fetch_single_note_from_turso(category, &id, conn).await? {
+			save_note_pure_local(category, &remote_note);
+		}
+	}
+
+	Ok(())
+}
+
+//pub async fn fetch_single_note_from_turso(
+//    category: &str,
+//    id: &str,
+//    config: &AppConfig,
+//) -> Result<Option<Notedb>, Box<dyn std::error::Error + Send + Sync>> {
+//    let db = libsql::Builder::new_remote(config.turso_url.clone(), config.turso_token.clone())
+//        .build()
+//        .await?;
+//    let conn = db.connect()?;
+//
+//    let sql = format!("SELECT id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at FROM {} WHERE id = ?1", category);
+//    let mut rows = conn.query(&sql, [id]).await?;
+//
+//    if let Some(row) = rows.next().await? {
+//        Ok(Some(Notedb {
+//            id: row.get(0)?,
+//            book_num: row.get(1)?,
+//            book_name: row.get(2)?,
+//            chapter: row.get(3)?,
+//            verse_start: row.get(4)?,
+//            char_offset: row.get(5)?,
+//            title: row.get(6)?,
+//            keywords: row.get(7)?,
+//            reference: row.get(8)?,
+//            body: row.get(9)?,
+//            subject: row.get(10)?,
+//            version: row.get(11)?,
+//            created_at: row.get(12)?,
+//            updated_at: row.get(13)?,
+//        }))
+//    } else {
+//        Ok(None)
+//    }
+//}
+pub async fn fetch_single_note_from_turso(
+    category: &str,
+    id: &str,
+    conn: &libsql::Connection,
+) -> Result<Option<Notedb>, Box<dyn std::error::Error + Send + Sync>> {
+    let sql = format!("SELECT id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at FROM {} WHERE id = ?1", category);
+    let mut rows = conn.query(&sql, [id]).await?;
+
+    if let Some(row) = rows.next().await? {
+        Ok(Some(Notedb {
+            id: row.get(0)?,
+            book_num: row.get(1)?,
+            book_name: row.get(2)?,
+            chapter: row.get(3)?,
+            verse_start: row.get(4)?,
+            char_offset: row.get(5)?,
+            title: row.get(6)?,
+            keywords: row.get(7)?,
+            reference: row.get(8)?,
+            body: row.get(9)?,
+            subject: row.get(10)?,
+            version: row.get(11)?,
+            created_at: row.get(12)?,
+            updated_at: row.get(13)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+pub fn save_note_pure_local(category: &str, note: &Notedb) {
+    let notes_dir = dirs::data_dir().unwrap().join("bible_reader/notes");
+    let db_path = notes_dir.join("note.db");
+    
+    // 如果目录不存在就创建
+    if !notes_dir.exists() {
+        let _ = std::fs::create_dir_all(&notes_dir);
+    }
+
+    if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+        let sql = format!(
+            "REPLACE INTO {} (id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            category
+        );
+
+        let _ = conn.execute(
+            &sql,
+            rusqlite::params![
+                note.id,
+                note.book_num,
+                note.book_name,
+                note.chapter,
+                note.verse_start,
+                note.char_offset,
+                note.title,
+                note.keywords,
+                note.reference,
+                note.body,
+                note.subject,
+                note.version,
+                note.created_at,
+                note.updated_at,
+            ],
+        );
+    }
+}
+
+pub async fn enable_sync_service(
+    url: String,
+    token: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // 1. 验证：尝试连接 Turso
+    let db = libsql::Builder::new_remote(url.clone(), token.clone())
+        .build()
+        .await?;
+    let conn = db.connect()?;
+
+    // 2. 检查并确保云端表结构存在
+    // 只有表存在或创建成功，才能说明同步功能可以正常工作
+    let table_sql = format!(
+        "CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY, book_num INTEGER, book_name TEXT,
+            chapter TEXT, verse_start INTEGER, char_offset INTEGER,
+            title TEXT, keywords TEXT, reference TEXT, body TEXT,
+            subject TEXT, version TEXT, created_at TEXT, updated_at TEXT
+        );"
+    );
+		// 云端初始化
+    conn.execute_batch(&table_sql).await?;
+
+		// 本地初始化：确保本地 note.db 也有这张表
+    // 这样 sync_all_notes 第一次运行时就不会报错找不到表了
+    let notes_dir = dirs::data_dir().unwrap().join("bible_reader/notes");
+    if !notes_dir.exists() {
+        std::fs::create_dir_all(&notes_dir)?;
+    }
+    let db_path = notes_dir.join("note.db");
+    
+    let local_conn = rusqlite::Connection::open(&db_path)?;
+    local_conn.execute(&table_sql, [])?; // 使用同样的 SQL 语句初始化本地
+
+    // 3. 切换状态：读取旧配置，更新 URL/Token，并将开关设为 true
+    let mut config = AppConfig::load();
+    config.turso_url = url;
+    config.turso_token = token;
+    config.sync_enabled = true; // 状态切换：false -> true
+
+    // 4. 持久化到 config.json
+    config.save()?;
+
+    Ok(())
 }

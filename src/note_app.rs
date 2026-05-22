@@ -1,9 +1,10 @@
 use eframe::egui;
 use egui::{RichText,ScrollArea};
-use crate::notes::{Notedb,save_note,delete_note};
+use crate::notes::{Notedb,AppConfig,save_note,delete_note,sync_to_turso,delete_from_turso};
 
 pub struct NoteApp {
 		pub note: Notedb,
+		pub config: AppConfig,
 }
 fn note_visuals() -> egui::Visuals {
 	let mut v = egui::Visuals::light();
@@ -58,23 +59,97 @@ impl eframe::App for NoteApp {
 				ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
 					if ui.add_sized([btn_w, btn_h], egui::Button::new("🗑删除"))
 						.on_hover_cursor(egui::CursorIcon::Default)
-						.clicked() {
-						if let Err(e) = delete_note("notes", &note.id) {
-							eprintln!("删除笔记失败 id={}: {:?}", note.id, e);
-						} else {
-							println!("删除笔记 id={}", note.id);
-						}
-						ctx.request_repaint_of(egui::ViewportId::ROOT);
-						ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-					}
+							.clicked() {
+								if let Err(e) = delete_note("notes", &note.id) {
+									eprintln!("删除笔记失败 id={}: {:?}", note.id, e);
+								} else {
+									println!("删除笔记 id={}", note.id);
+										let cfg = &self.config;
+										if cfg.sync_enabled && !cfg.turso_url.is_empty() && !cfg.turso_token.is_empty() {
+											let cfg_clone = cfg.clone();
+											let id_clone = note.id.clone();
+											let ctx_clone = ctx.clone();
+											tokio::spawn(async move {
+												//match delete_from_turso("notes", &id_clone, &cfg_clone).await {
+												//	Ok(_) => {
+												//		println!("✅ 云端同步删除成功 id={}", id_clone);
+												//		ctx_clone.request_repaint(); 
+												//	}
+												//	Err(e) => eprintln!("❌ 云端同步删除失败: {:?}", e),
+												//}
+												let conn_result = crate::notes::get_or_create_conn(
+                        None, 
+                        cfg_clone.turso_url.clone(), 
+                        cfg_clone.turso_token.clone()
+                    ).await;
+
+                    match conn_result {
+                        Ok(conn) => {
+                            // 2. 传入连接引用 &conn
+                            match delete_from_turso("notes", &id_clone, &conn).await {
+                                Ok(_) => {
+                                    println!("✅ 云端同步删除成功 id={}", id_clone);
+                                    ctx_clone.request_repaint(); 
+                                    // 如果删除后需要关闭窗口，取消下面这行的注释
+                                    // ctx_clone.send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
+                                Err(e) => eprintln!("❌ 云端删除失败: {:?}", e),
+                            }
+                        }
+                        Err(e) => eprintln!("❌ 无法连接云端执行删除: {:?}", e),
+                    }
+											});
+										}
+								}
+									//ctx.request_repaint_of(egui::ViewportId::ROOT);
+									//ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+							}
 				});
 				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 					if ui.add_sized([btn_w, btn_h], egui::Button::new("保存"))
 						.on_hover_cursor(egui::CursorIcon::Default)
-						.clicked() {
-						save_note("notes", note);
-						ctx.request_repaint_of(egui::ViewportId::ROOT);
-						ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+							.clicked() {
+								// 1. 先执行原有的本地保存逻辑
+								save_note("notes", note);
+								// 2. 开启后台异步任务进行同步
+								let cfg = &self.config;
+								if cfg.sync_enabled && !cfg.turso_url.is_empty() && !cfg.turso_token.is_empty() {
+								let note_clone = note.clone();
+								let cfg_clone = self.config.clone();
+								let ctx_clone = ctx.clone();
+									tokio::spawn(async move {
+										//match sync_to_turso("notes", &note_clone, &cfg_clone).await {
+										//	Ok(_) => {
+										//		println!("云端同步成功！");
+										//		ctx_clone.send_viewport_cmd(egui::ViewportCommand::Close);
+										//	}
+										//	Err(e) => {
+										//		eprintln!("云端同步失败: {}", e);
+										//		ctx_clone.send_viewport_cmd(egui::ViewportCommand::Close);
+										//	}
+										//}
+										let conn_result = crate::notes::get_or_create_conn(
+											None, 
+											cfg_clone.turso_url.clone(), 
+											cfg_clone.turso_token.clone()
+										).await;
+
+										match conn_result {
+											Ok(conn) => {
+												// 这里依然能享受到复用：sync_to_turso 会使用上面刚建好的这一个 conn
+												let _ = sync_to_turso("notes", &note_clone, &conn).await;
+												ctx_clone.send_viewport_cmd(egui::ViewportCommand::Close);
+											}
+											Err(e) => {
+												eprintln!("云端连接失败: {}", e);
+												ctx_clone.send_viewport_cmd(egui::ViewportCommand::Close);
+											}
+										}
+									});
+								} else {
+									ctx.request_repaint_of(egui::ViewportId::ROOT);
+									ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+								}
 					}
 				});
 			});
@@ -88,7 +163,7 @@ impl eframe::App for NoteApp {
 					ui.add_sized([label_width, 0.0],
 						egui::Label::new(RichText::new("主题：").size(14.0)));
 					let subject_text_edit = egui::TextEdit::singleline(
-						note.subject.get_or_insert(String::new()))
+						note.subject.get_or_insert(String::new())).hint_text("例如：查经，灵修")
 						.desired_width(ui.available_width());
 					ui.add(subject_text_edit);
 				});
@@ -133,7 +208,7 @@ impl eframe::App for NoteApp {
 					);
 
 				});
-			ui.separator();
+			//ui.separator();
 		});
 
 	}

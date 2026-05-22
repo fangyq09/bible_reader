@@ -4,10 +4,11 @@ mod theme;
 mod utils;
 mod notes;
 mod note_app;
+mod ui_utils;
 use std::fs;
 use rusqlite::Connection;
 use eframe::egui;
-use egui::{FontDefinitions, FontFamily, FontId, TextFormat};
+use egui::{FontDefinitions, FontFamily, FontId, TextFormat, FontData};
 use egui::text::LayoutJob;
 use std::path::PathBuf;
 use std::collections::HashMap;
@@ -27,9 +28,8 @@ use crate::utils::{
 	draw_hover_button,
 	parse_verse_num_at_index,
 };
-use crate::notes::{Notedb};
+use crate::notes::{Notedb, AppConfig, sync_all_notes};
 use crate::note_app::NoteApp;
-
 
 #[derive(PartialEq, Clone)]
 struct ContentState {
@@ -55,10 +55,13 @@ struct ParallelVerse {
     text: String,
 }
 
-// 应用状态
+// 字段
 struct BibleApp {
 	theme: Theme,
 	ui_initialized: bool,
+	app_title: String,
+	toolbar_height: f32,
+	toolbar_padding: f32,
 	bible_root: PathBuf,
 	versions: Vec<String>,
 	pub current_version: String,
@@ -104,13 +107,19 @@ struct BibleApp {
 	body_font_size: f32,
 	show_font_size_popup: bool,
 	was_focused: bool,
+	pub show_sync_config_window: bool, 
+	pub tmp_turso_url: String,        
+	pub tmp_turso_token: String,
+	pub show_token_raw: bool,
+	//pub turso_conn: Option<std::sync::Arc<libsql::Connection>>,
 }
 //中文字体
 pub fn configure_chinese_font(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         "chinese_font".to_string(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/SourceHanSansCN-Regular.otf")).into(),
+        FontData::from_static(include_bytes!("../assets/fonts/SourceHanSansCN-Regular.otf")).into(),
+        //FontData::from_static(include_bytes!("../assets/fonts/MiSans-Regular.otf")).into(),
     );
     fonts.families.get_mut(&FontFamily::Proportional).unwrap()
         .insert(0, "chinese_font".to_string());
@@ -122,6 +131,7 @@ pub fn configure_chinese_font(ctx: &egui::Context) {
 //初始化
 impl BibleApp {
 	fn new(cc: &eframe::CreationContext<'_>) -> Self {
+
 		// ---------- 初始化数据目录 ----------
 		let user_data_path = dirs::data_dir()
 			.unwrap_or_else(|| PathBuf::from("."))
@@ -165,98 +175,116 @@ impl BibleApp {
 				.filter_map(|e| {
 					let path = e.path();
 					if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-						//if ext == "db" || ext == "sqlite3" || ext == "sqlite" {
+						//if ext == "db" || ext == "sqlite3" || ext == "sqlite" {...}
 						if ext == "sqlite3" {
 							return Some(path.file_name().unwrap().to_string_lossy().to_string());
 						}
 					}
 					None
-					})
-				.collect()
-				} else {
-					Vec::new()
-				};
+				})
+			.collect()
+		} else {
+			Vec::new()
+		};
 
-			//versions.sort(); //字典序排列译本
-			sort_versions_chinese_first(&mut versions);
+		//versions.sort(); //字典序排列译本
+		sort_versions_chinese_first(&mut versions);
 
-			// 你想要优先加载的译本
-			let preferred_version = "和合本.sqlite3".to_string();
+		// 你想要优先加载的译本
+		let preferred_version = "和合本.sqlite3".to_string();
 
 
-			// 先创建 app（不加载书卷）
-			let mut app = Self {
-				theme: Theme::Light,
-				ui_initialized: true,
-				bible_root,
-				versions,
-				current_version: String::new(),
-				books: vec![],
-				chapters: vec![],
-				current_book: None,
-				current_chapter: None,
-				content: String::new(),
-				current_book_name: Some("创世纪".to_string()),
-				chapter_panel_title: "章节（创）".to_string(),
-				search_query: String::new(),
-				search_results: vec![],
-				text_cache: HashMap::new(),
-				conn: None, 
-				conn_version: None,
-				show_search_window: false,
-				last_search_query: String::new(),
-				highlight_query: None,
-				jump_back_stack: Vec::new(),     
-				jump_forward_stack: Vec::new(),  
-				number_marks: HashMap::new(),
-				show_notes: false,
-				show_import_export_window: false,
-				last_appended_notes_state: None, 
-				appended_notes_current: Vec::new(),
-				current_note: None,
-				show_version_menu: false,
-				change_version_menu: false,
-				show_settings_menu: false,
-				show_highlight: false,
-				show_notes_list_window: false,
-				notes_cache: Vec::new(),
-				note_window_open: false,
-				notes_search_keyword: String::new(),
-				active_search_type: String::new(),
-				editable_mode: false,
-				content_layout: None,
-				last_state: None,
-				selected_verse_num: None,
-				parallel_verses: Vec::new(),
-				show_parallel_window: false,
-				parallel_window_pos: None,
-				body_font_size: 16.0,
-				show_font_size_popup: false,
-				was_focused: true,
-			};
+		// 先创建 app（不加载书卷）
+		let mut app = Self {
+			theme: Theme::Light,
+			ui_initialized: true,
+			app_title: "圣经阅读器".to_owned(),
+			toolbar_height: 30.0, 
+			toolbar_padding: 4.0,
+			bible_root,
+			versions,
+			current_version: String::new(),
+			books: vec![],
+			chapters: vec![],
+			current_book: None,
+			current_chapter: None,
+			content: String::new(),
+			current_book_name: Some("创世纪".to_string()),
+			chapter_panel_title: "章（创）".to_string(),
+			search_query: String::new(),
+			search_results: vec![],
+			text_cache: HashMap::new(),
+			conn: None, 
+			conn_version: None,
+			show_search_window: false,
+			last_search_query: String::new(),
+			highlight_query: None,
+			jump_back_stack: Vec::new(),     
+			jump_forward_stack: Vec::new(),  
+			number_marks: HashMap::new(),
+			show_notes: false,
+			show_import_export_window: false,
+			last_appended_notes_state: None, 
+			appended_notes_current: Vec::new(),
+			current_note: None,
+			show_version_menu: false,
+			change_version_menu: false,
+			show_settings_menu: false,
+			show_highlight: false,
+			show_notes_list_window: false,
+			notes_cache: Vec::new(),
+			note_window_open: false,
+			notes_search_keyword: String::new(),
+			active_search_type: String::new(),
+			editable_mode: false,
+			content_layout: None,
+			last_state: None,
+			selected_verse_num: None,
+			parallel_verses: Vec::new(),
+			show_parallel_window: false,
+			parallel_window_pos: None,
+			body_font_size: 18.0,
+			show_font_size_popup: false,
+			was_focused: true,
+			show_sync_config_window: false,
+			tmp_turso_url: String::new(),
+			tmp_turso_token: String::new(),
+			show_token_raw: false,
+			//turso_conn: None,
+		};
 
-			// 若没有任何圣经数据库，就不加载，直接返回 app
-			if app.versions.is_empty() {
-				eprintln!("Warning: 未找到任何圣经数据库文件 (*.db / *.sqlite3)");
-				return app;
-			}
-
-			//   选择要加载的译本
-			let version_to_load = if app.versions.contains(&preferred_version) {
-				preferred_version
-			} else {
-				// 若指定译本不存在就用第一个译本
-				app.versions.first().cloned().unwrap_or_default()
-			};
-			//   调用 on_version_changed
-			if !version_to_load.is_empty() {
-				app.current_version = version_to_load.clone();
-				app.open_current_db();
-				app.on_version_changed(version_to_load);
-			}
-			app
+		// 若没有任何圣经数据库，就不加载，直接返回 app
+		if app.versions.is_empty() {
+			eprintln!("Warning: 未找到任何圣经数据库文件 (*.db / *.sqlite3)");
+			return app;
 		}
+
+		//   选择要加载的译本
+		let version_to_load = if app.versions.contains(&preferred_version) {
+			preferred_version
+		} else {
+			// 若指定译本不存在就用第一个译本
+			app.versions.first().cloned().unwrap_or_default()
+		};
+		//   调用 on_version_changed
+		if !version_to_load.is_empty() {
+			app.current_version = version_to_load.clone();
+			app.open_current_db();
+			app.on_version_changed(version_to_load);
+		}
+
+
+		// 启动时笔记同步逻辑
+		#[cfg(not(debug_assertions))]
+		{
+			//let cfg = crate::notes::AppConfig::load();
+			//spawn_sync_task(cfg);
+			app.spawn_sync_task();
+		}
+
+		app
 	}
+}
 
 // 连接数据库
 impl BibleApp {
@@ -272,13 +300,6 @@ impl BibleApp {
 
 		let db_path = self.bible_root.join(&self.current_version);
 
-		//let conn = Connection::open(&db_path)
-		//	.unwrap_or_else(|e| {
-		//		panic!("打开数据库失败 {:?}: {}", db_path, e);
-		//	});
-
-		//self.conn = Some(conn);
-		//self.conn_version = Some(self.current_version.clone());
 		match Connection::open(&db_path) {
 			Ok(conn) => {
 				self.conn = Some(conn);
@@ -478,8 +499,13 @@ impl BibleApp {
 			.resizable(true)
 			.default_width(150.0)
 			.show(ctx, |ui| {
+				ui.add_space(self.toolbar_padding);
+				ui.horizontal(|ui| {
+					ui.set_height(self.toolbar_height); // 强制这一行的高度
+					ui.set_width(ui.available_width());   // 强制这一行的宽度
+					self.version_menu_button(ui, &colors);
+				});
 
-				self.version_menu_button(ui, &colors);
 
 				ui.separator();
 
@@ -526,7 +552,13 @@ impl BibleApp {
 			.default_width(120.0)
 			.show(ctx, |ui| {
 				if let Some(_book) = book_num {
+					ui.add_space(self.toolbar_padding);
+					ui.horizontal(|ui| {
+						ui.set_height(self.toolbar_height); // 强制这一行的高度
+						ui.set_width(ui.available_width());   // 强制这一行的宽度
 					ui.label(&self.chapter_panel_title);
+					});
+					//ui.label(&self.chapter_panel_title);
 					ui.separator();
 
 					egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
@@ -779,19 +811,6 @@ impl BibleApp {
 						ui.set_min_width(popup_width);
 						ui.set_max_width(popup_width);
 
-						//let dark_theme_btn = draw_hover_button(
-						//	ui,
-						//	"暗色主题",
-						//	egui::Vec2::new(70.0, 24.0),
-						//	colors
-						//);
-						//let light_theme_btn = draw_hover_button(
-						//	ui,
-						//	"浅色主题",
-						//	egui::Vec2::new(70.0, 24.0),
-						//	colors
-						//);
-
 						let toggle_theme_btn = draw_hover_button(
 							ui,
 							match self.theme {
@@ -853,17 +872,20 @@ impl BibleApp {
 							colors,
 						);
 
+						let sync_notes_btn = draw_hover_button(
+							ui,
+							"同步笔记",
+							egui::Vec2::new(70.0, 24.0),
+							colors,
+						);
 
-						//if dark_theme_btn.clicked()
-						//{
-						//	self.theme = Theme::Dark;
-						//	self.show_settings_menu = false;
-						//}
+						let sync_config_btn = draw_hover_button(
+							ui,
+							"同步设置",
+							egui::Vec2::new(70.0, 24.0),
+							colors,
+						);
 
-						//if light_theme_btn.clicked() {
-						//	self.theme = Theme::Light;
-						//	self.show_settings_menu = false;
-						//}
 
 						if toggle_theme_btn.clicked() {
 							self.theme = match self.theme {
@@ -910,6 +932,21 @@ impl BibleApp {
 
 						if copy_chapter_btn.clicked() {
 							ui.ctx().copy_text(self.content.clone());
+							self.show_settings_menu = false;
+						}
+
+						if sync_notes_btn.clicked() {
+							//let cfg = crate::notes::AppConfig::load();
+							//spawn_sync_task(cfg);
+							self.spawn_sync_task();
+							self.show_settings_menu = false;
+						}
+
+						if sync_config_btn.clicked() {
+							let cfg = crate::notes::AppConfig::load();
+							self.tmp_turso_url = cfg.turso_url;
+							self.tmp_turso_token = cfg.turso_token;
+							self.show_sync_config_window = true;
 							self.show_settings_menu = false;
 						}
 					});
@@ -981,9 +1018,9 @@ impl BibleApp {
 								self.show_import_export_window = false;
 							}
 
-							if ui.add(egui::Button::selectable(false, "笔记同步")).clicked() {
-								self.show_import_export_window = false;
-							}
+							//if ui.add(egui::Button::selectable(false, "笔记同步")).clicked() {
+							//	self.show_import_export_window = false;
+							//}
 						});
 					});
 			});
@@ -1070,8 +1107,9 @@ impl BibleApp {
 //右侧顶栏
 impl BibleApp {
 	fn ui_top_toolbar(&mut self, ui: &mut egui::Ui, colors: &ThemeColors) {
+		ui.add_space(self.toolbar_padding);
 		ui.horizontal(|ui| {
-
+			ui.set_height(self.toolbar_height); // 强制这一行的高度
 			//译本切换按钮
 			self.change_version_button(ui, &colors);
 
@@ -1213,7 +1251,7 @@ impl BibleApp {
 			.open(&mut self.show_search_window)
 			.default_size([400.0, 600.0])
 			.max_width(400.0)
-			.default_pos([300.0, 50.0])
+			.default_pos([300.0, 70.0])
 			.show(ctx, |ui| {
 				//自定义顶栏
 				ui.horizontal(|ui| {
@@ -1303,7 +1341,7 @@ impl BibleApp {
 			////self.on_chapter_selected(book, chap);
 			let ch_num = chap.parse::<i32>().unwrap_or(1);
 			let abbr = book_number_to_abbr(book); 
-			self.chapter_panel_title = format!("章节（{}）", abbr);
+			self.chapter_panel_title = format!("章（{}）", abbr);
 			if let Some(content) = self.text_cache.get(&(book, ch_num)).cloned() {
 				self.record_jump();
 				self.current_book = Some(book);
@@ -1373,6 +1411,8 @@ impl BibleApp {
 						.sense(egui::Sense::click())
 						.selectable(true),
 					);
+					// --- 选中即复制逻辑 ---
+					// ...
 					// --- 右键点击位置解析节号 ---
 					if text_response.secondary_clicked() {
 						self.show_parallel_window = false;
@@ -1529,7 +1569,7 @@ impl BibleApp {
 			// 新建笔记
 			Notedb {
 				id: Uuid::new_v4().to_string(),
-				created_at: Some(Utc::now().format("%Y-%m-%d").to_string()),
+				created_at: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
 				book_num: self.current_book,
 				book_name: self.current_book_name.clone(),
 				chapter: self.current_chapter.clone(),
@@ -1564,6 +1604,117 @@ impl BibleApp {
 		{
 			eprintln!("无法启动笔记窗口: {e}");
 		}
+	}
+}
+
+// 笔记同步
+impl BibleApp {
+	fn spawn_sync_task(&mut self) {
+		let cfg = AppConfig::load();
+		if !cfg.sync_enabled || cfg.turso_url.is_empty() || cfg.turso_token.is_empty() { 
+			return; 
+		}
+
+		let url = cfg.turso_url.clone();
+		let token = cfg.turso_token.clone();
+
+		tokio::spawn(async move {
+			match crate::notes::get_or_create_conn(None, url, token).await {
+				Ok(conn) => {
+					//let _ = sync_all_notes("notes", &conn).await;
+					match sync_all_notes("notes", &conn).await {
+						Ok(_) => { println!("✅ 笔记同步成功完成"); }
+						Err(e) => { eprintln!("❌ 笔记同步出错: {:?}", e); }
+					}
+				}
+				Err(e) => eprintln!("❌ 无法获取云端连接: {:?}", e),
+			}
+		});
+	}
+}
+
+//笔记同步设置窗口
+impl BibleApp {
+	fn show_sync_config_window(&mut self, ctx: &egui::Context) {
+		let mut is_open = self.show_sync_config_window;
+		if !is_open { return; }
+		egui::Window::new("Turso云同步配置")
+			.open(&mut is_open)
+			.resizable(false)
+			.max_width(400.0)
+			.show(ctx, |ui| {
+				ui.vertical(|ui| {
+					let mut cfg = crate::notes::AppConfig::load();
+
+					// 状态显示
+					ui.horizontal(|ui| {
+						ui.label("当前状态:");
+						if cfg.sync_enabled {
+							ui.colored_label(egui::Color32::from_rgb(0, 200, 0), "已开启笔记同步");
+						} else {
+							ui.colored_label(egui::Color32::GRAY, "已停止笔记同步");
+						}
+					});
+
+					ui.separator();
+
+					// 输入部分
+					let token_edit_width = ui.available_width() - 60.0;
+					ui.label("Turso数据库URL:");
+					ui.add(egui::TextEdit::singleline(&mut self.tmp_turso_url).desired_width(token_edit_width));
+
+					ui.add_space(4.0);
+
+					ui.label("Turso访问Token:");
+					ui.horizontal(|ui| {
+						ui.add(
+							egui::TextEdit::singleline(&mut self.tmp_turso_token)
+							.password(!self.show_token_raw) 
+							.desired_width(token_edit_width)
+						);
+						let icon = if self.show_token_raw { "隐藏" } else { "显示" };
+						if ui.selectable_label(self.show_token_raw, icon).clicked() {
+							self.show_token_raw = !self.show_token_raw;
+						}
+					});
+
+					ui.add_space(10.0);
+
+					ui.horizontal(|ui| {
+						// 启动/更新按钮
+						if ui.button("验证并启动同步").clicked() {
+							let url = self.tmp_turso_url.trim().to_string();
+							let token = self.tmp_turso_token.trim().to_string();
+
+							//self.turso_conn = None;
+
+							tokio::spawn(async move {
+								// 这里调用你之前写的 enable_sync_service
+								match crate::notes::enable_sync_service(url, token).await {
+									Ok(_) => println!("✅ 同步功能激活成功"),
+									Err(e) => eprintln!("❌ 激活失败: {:?}", e),
+								}
+							});
+						}
+
+						ui.add_space(40.0);
+
+						// 停止按钮
+						if cfg.sync_enabled {
+							if ui.button("停止同步").clicked() {
+								cfg.sync_enabled = false;
+								let _ = cfg.save(); // 持久化关闭状态
+								//self.turso_conn = None;
+								println!("🚫 同步已禁用");
+							}
+						}
+					});
+
+					ui.add_space(8.0);
+					ui.weak("提示：如果没有Turso账户，请打开此链接https://turso.tech/进行注册并获取token。");
+				});
+			});
+		self.show_sync_config_window = is_open;
 	}
 }
 
@@ -1643,7 +1794,7 @@ impl BibleApp {
 		self.show_search_window = false;
 		self.current_book = Some(book_num);
 		let abbr = book_number_to_abbr(book_num);
-    self.chapter_panel_title = format!("章节（{}）", abbr);
+    self.chapter_panel_title = format!("章（{}）", abbr);
 
 		// 确保数据库已经打开
 		if let Some(conn) = &self.conn {
@@ -1835,31 +1986,40 @@ impl BibleApp {
 			self.show_parallel_window(ctx);
 			//self.draw_font_size_window(ctx);
 			self.font_size_popup(ctx,&colors);
+			self.show_sync_config_window(ctx);
     }
 }
-
+//update函数
 impl eframe::App for BibleApp {
 	fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-		//apply_theme(ctx, &self.theme);//挪到初始化与切换主题按钮处
+
+		// 1. 绘制自定义标题栏
+		self.render_custom_title_bar(ctx);
+
+		// 2. 主题初始化与颜色获取
 		if self.ui_initialized {
 			apply_theme(ctx, &self.theme);
 			self.ui_initialized = false; 
 		}
 		let colors = get_theme_colors(ctx, &self.theme);
-		//测试输入法
-		//ctx.input(|i| {
-		//	for e in &i.events {
-		//		if matches!(e, egui::Event::Ime(_)) {
-		//			eprintln!("{:?}", e);
-		//		}
-		//	}
-		//});
+
 		// 左侧 UI
 		self.ui_left_books_panel(ctx, &colors);
 		self.ui_left_chapters_panel(ctx, &colors);
 
 		// 中央 UI
-		egui::CentralPanel::default().show(ctx, |ui| {
+		egui::CentralPanel::default()
+			.frame(egui::Frame::NONE
+				//.fill(egui::Color32::from_rgb(242, 235, 217))
+				.fill(ctx.style().visuals.panel_fill)
+				.inner_margin(egui::Margin {
+					left: 8,
+					right: 8,
+					top: 0,   
+					bottom: 12,
+				})
+			)
+			.show(ctx, |ui| {
 			// 顶部工具栏
 			self.ui_top_toolbar(ui, &colors);
 			ui.separator();
@@ -1880,10 +2040,16 @@ impl eframe::App for BibleApp {
 
 		// 检测快捷键
 		self.check_jump_shortcuts(ctx);
+
+		// --- 自制titlebar 在这里画全局边框 ---
+		if !ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+			self.draw_window_frame(ctx);
+		}
 	}
 }
-
-fn main() -> eframe::Result<()> {
+//main函数
+#[tokio::main]
+async fn main() -> eframe::Result<()> {
 	let args: Vec<String> = std::env::args().collect();
 	if args.len() > 1 && args[1] == "--note-window" {
 		let mut note_json: Option<String> = None;
@@ -1907,7 +2073,7 @@ fn main() -> eframe::Result<()> {
 		} else {
 			Notedb {
 				id: Uuid::new_v4().to_string(),
-				created_at: Some(Utc::now().format("%Y-%m-%d").to_string()),
+				created_at: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
 				..Default::default()
 			}
 		};
@@ -1926,6 +2092,7 @@ fn main() -> eframe::Result<()> {
 				configure_chinese_font(&cc.egui_ctx);
 				Ok(Box::new(NoteApp { 
 					note: note_data,
+					config: crate::notes::AppConfig::load(),
 				}))
 			}),
 		)
@@ -1935,14 +2102,19 @@ fn main() -> eframe::Result<()> {
 			renderer: eframe::Renderer::Wgpu,
 			viewport: egui::ViewportBuilder::default()
 				.with_inner_size([1200.0, 800.0])
-				.with_title("圣经阅读器"),
+				.with_decorations(false),
 				..Default::default()
 		};
-
 		eframe::run_native(
 			"圣经阅读器",
 			options,
-			Box::new(|cc| Ok(Box::new(BibleApp::new(cc)))),
+			Box::new(move |cc| {
+				configure_chinese_font(&cc.egui_ctx);
+        cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
+            egui::pos2(100.0, 10.0)
+        ));
+				Ok(Box::new(BibleApp::new(cc)))
+			}),
 		)
 	}
 }
