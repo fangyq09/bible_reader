@@ -1,6 +1,6 @@
 [package]
 name = "bible_reader"
-version = "0.4.0"
+version = "0.4.2"
 edition = "2024"
 
 [dependencies]
@@ -13,7 +13,17 @@ chrono = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rfd = "0.15"
+libsql = { version = "0.6.0", features = ["hrana"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [patch.crates-io]
-egui = { path = "local_crates/egui-0.33.3" }
+egui = { git = "https://github.com/fangyq09/egui-0.33.3-patch.git" }
+
+
+[profile.release]
+opt-level = 3        # 最高级优化
+lto = "fat"          # 开启全代码增量优化 (Link Time Optimization)
+codegen-units = 1    # 牺牲编译速度换取更好的全局优化
+panic = "abort"      # 移除 panic 栈回溯信息，减小体积并提升性能
+strip = true         # 移除符号表，进一步压缩体积
 
