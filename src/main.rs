@@ -4,6 +4,7 @@ mod theme;
 mod utils;
 mod notes;
 mod note_app;
+mod note_reader;
 mod ui_utils;
 use std::fs;
 use rusqlite::Connection;
@@ -30,6 +31,7 @@ use crate::utils::{
 };
 use crate::notes::{Notedb, AppConfig, sync_all_notes};
 use crate::note_app::NoteApp;
+use crate::note_reader::{NoteReaderApp};
 
 #[derive(PartialEq, Clone)]
 struct ContentState {
@@ -88,9 +90,12 @@ struct BibleApp {
 	show_settings_menu: bool,
 	show_highlight: bool,
 	pub show_notes: bool,
+	pub show_comments: bool,
 	pub show_import_export_window: bool,
 	pub last_appended_notes_state: Option<NavState>,
 	pub appended_notes_current: Vec<Notedb>,
+	pub last_appended_comments_state: Option<NavState>,
+	pub appended_comments_current: Vec<Notedb>,
 	pub show_notes_list_window: bool,
 	pub notes_cache: Vec<Notedb>,
 	pub note_window_open: bool,
@@ -112,21 +117,36 @@ struct BibleApp {
 	pub tmp_turso_token: String,
 	pub show_token_raw: bool,
 	//pub turso_conn: Option<std::sync::Arc<libsql::Connection>>,
+	pub show_help_window: bool,
 }
 //中文字体
 pub fn configure_chinese_font(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
+		// 1. 注册中文字体
     fonts.font_data.insert(
         "chinese_font".to_string(),
         FontData::from_static(include_bytes!("../assets/fonts/SourceHanSansCN-Regular.otf")).into(),
         //FontData::from_static(include_bytes!("../assets/fonts/MiSans-Regular.otf")).into(),
     );
-    fonts.families.get_mut(&FontFamily::Proportional).unwrap()
-        .insert(0, "chinese_font".to_string());
-    fonts.families.get_mut(&FontFamily::Monospace).unwrap()
-        .insert(0, "chinese_font".to_string());
+	
+		// 2. 安全地插入 Proportional 字体族
+    if let Some(proportional) = fonts.families.get_mut(&FontFamily::Proportional) {
+        proportional.insert(0, "chinese_font".to_string());
+    }
+    
+    // 注意：Monospace 最好保留系统默认等宽，或者如果你希望代码块也用思源黑体可以保留下面这行
+    if let Some(monospace) = fonts.families.get_mut(&FontFamily::Monospace) {
+        monospace.insert(0, "chinese_font".to_string());
+    }
     
     ctx.set_fonts(fonts);
+		// 强行固定正文字号为 16.0
+    ctx.style_mut(|style| {
+        style.text_styles.insert(
+            egui::TextStyle::Body,
+            egui::FontId::proportional(16.0),
+        );
+    });
 }
 //初始化
 impl BibleApp {
@@ -223,9 +243,12 @@ impl BibleApp {
 			jump_forward_stack: Vec::new(),  
 			number_marks: HashMap::new(),
 			show_notes: false,
+			show_comments: false,
 			show_import_export_window: false,
 			last_appended_notes_state: None, 
 			appended_notes_current: Vec::new(),
+			last_appended_comments_state: None, 
+			appended_comments_current: Vec::new(),
 			current_note: None,
 			show_version_menu: false,
 			change_version_menu: false,
@@ -251,6 +274,7 @@ impl BibleApp {
 			tmp_turso_token: String::new(),
 			show_token_raw: false,
 			//turso_conn: None,
+			show_help_window: false,
 		};
 
 		// 若没有任何圣经数据库，就不加载，直接返回 app
@@ -633,7 +657,7 @@ impl BibleApp {
 				.show(ui.ctx(), |ui| {
 					let popup_frame = egui::Frame {
 						fill: colors.menu_button_bg,
-						stroke: egui::Stroke::new(2.0, colors.menu_stroke),
+						stroke: egui::Stroke::new(2.0_f32, colors.menu_stroke),
 						corner_radius: egui::CornerRadius::same(4),
 						inner_margin: egui::Margin::same(4),
 						..Default::default()
@@ -721,7 +745,7 @@ impl BibleApp {
 				.show(ui.ctx(), |ui| {
 					let popup_frame = egui::Frame {
 						fill: colors.menu_button_bg,
-						stroke: egui::Stroke::new(2.0, colors.menu_stroke),
+						stroke: egui::Stroke::new(2.0_f32, colors.menu_stroke),
 						corner_radius:egui::CornerRadius::same(4),
 						inner_margin: egui::Margin::same(4),
 						..Default::default()
@@ -800,7 +824,7 @@ impl BibleApp {
 				.show(ui.ctx(), |ui| {
 					let frame = egui::Frame {
 						fill: colors.menu_button_bg,
-						stroke: egui::Stroke::new(2.0, colors.menu_stroke),
+						stroke: egui::Stroke::new(2.0_f32, colors.menu_stroke),
 						corner_radius: egui::CornerRadius::same(4),
 						inner_margin: egui::Margin::same(4),
 						..Default::default()
@@ -886,6 +910,14 @@ impl BibleApp {
 							colors,
 						);
 
+						// 帮助按钮
+						let help_btn = draw_hover_button(
+							ui,
+							"帮助说明",
+							egui::Vec2::new(70.0, 24.0),
+							colors,
+						);
+
 
 						if toggle_theme_btn.clicked() {
 							self.theme = match self.theme {
@@ -909,7 +941,7 @@ impl BibleApp {
 						}
 
 						if add_note_btn.clicked(){
-							self.open_noteapp_window(None);
+							self.open_noteapp_window(None, "notes");
 							self.show_settings_menu = false;
 						}
 
@@ -922,6 +954,7 @@ impl BibleApp {
 						if toggle_editable_btn.clicked(){
 							self.editable_mode = !self.editable_mode;
 							self.show_notes = false;
+							self.show_comments = false;
 							self.show_parallel_window = false;
 						}
 
@@ -947,6 +980,11 @@ impl BibleApp {
 							self.tmp_turso_url = cfg.turso_url;
 							self.tmp_turso_token = cfg.turso_token;
 							self.show_sync_config_window = true;
+							self.show_settings_menu = false;
+						}
+
+						if help_btn.clicked() {
+							self.show_help_window = true;
 							self.show_settings_menu = false;
 						}
 					});
@@ -987,7 +1025,7 @@ impl BibleApp {
 			.show(ctx, |ui| {
 				egui::Frame::default()
 					.fill(colors.menu_button_bg)
-					.stroke(egui::Stroke::new(2.0, colors.menu_stroke))
+					.stroke(egui::Stroke::new(2.0_f32, colors.menu_stroke))
 					.corner_radius(egui::CornerRadius::same(6))
 					.shadow(egui::Shadow {
 						offset: [0, 4],
@@ -1062,7 +1100,7 @@ impl BibleApp {
 			.show(ctx, |ui| {
 				egui::Frame::default()
 					.fill(colors.menu_button_bg)
-					.stroke(egui::Stroke::new(2.0, colors.menu_stroke))
+					.stroke(egui::Stroke::new(2.0_f32, colors.menu_stroke))
 					.corner_radius(egui::CornerRadius::same(6))
 					.inner_margin(egui::Margin::symmetric(12, 8))
 					.show(ui, |ui| {
@@ -1101,6 +1139,46 @@ impl BibleApp {
 		if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
 			self.show_font_size_popup = false;
 		}
+	}
+}
+// 帮助说明窗口
+impl BibleApp {
+	fn show_help_window(&mut self, ctx: &egui::Context) {
+		let mut is_open = self.show_help_window;
+		if !is_open { return; }
+
+		egui::Window::new("📖 帮助与使用说明")
+			.open(&mut is_open)
+			.resizable(true)
+			.default_width(450.0)
+			.default_height(350.0)
+			.show(ctx, |ui| {
+				egui::ScrollArea::vertical().show(ui, |ui| {
+					ui.heading("🔍 搜索栏使用方法");
+					ui.add_space(4.0);
+					ui.label("1. 基础搜索：直接输入关键词（如：爱、信心），可检索全经文。");
+					ui.label("2. 书名限制：使用冒号或分隔符，例如 创:起初 或 约&光。");
+					ui.label("3. 新旧约快捷：输入 新: 或 旧: 配合关键词可快速限定在新约或旧约范围内检索。");
+					
+					ui.separator();
+					ui.add_space(16.0);
+					ui.heading("⌨快捷键指南");
+					ui.add_space(4.0);
+					ui.label("• Ctrl + O : 后退（跳转回上一个历史位置）");
+					ui.label("• Ctrl + I : 前进（恢复到下一个历史位置）");
+					ui.label("• Alt + 数字 (1-9) : 在当前阅读位置设置书签");
+					ui.label("• F1 - F9 : 快速跳转到对应的数字书签位置");
+
+					ui.separator();
+					ui.add_space(16.0);
+					ui.heading("💡 其他提示");
+					ui.add_space(4.0);
+					ui.label("• 在正文区域点击右键可以调出菜单，进行添加笔记、注释、经文对比等操作。");
+					ui.label("• 支持通过设置切换主题、调整字体大小以及同步笔记。");
+				});
+			});
+
+		self.show_help_window = is_open;
 	}
 }
 
@@ -1371,6 +1449,7 @@ impl BibleApp {
 		self.was_focused = is_focused;
 		if force_refresh {
 			self.last_appended_notes_state = None;
+			self.last_appended_comments_state = None;
 			self.last_state = None;
 			self.content_layout = None;
 		}
@@ -1430,7 +1509,13 @@ impl BibleApp {
 					self.show_right_click_menu(&mut text_response, true);
 				}
 			}
+			if self.show_comments {
+				// 显示注释
+				self.get_appended_comments();
+				self.show_appended_comments(ui);
+			}
 			if self.show_notes {
+				//显示笔记
 				self.get_appended_notes();
 				self.show_appended_notes(ui);
 			}
@@ -1468,7 +1553,7 @@ impl BibleApp {
 		fn show_right_click_menu(&mut self, response: &mut egui::Response, show_parallel_option: bool) {
 			response.context_menu(|ui| {
 				if ui.button("➕ 添加笔记").clicked() { 
-					self.open_noteapp_window(None);
+					self.open_noteapp_window(None, "notes");
 					ui.close_kind(egui::UiKind::Menu)
 				}
 
@@ -1480,6 +1565,36 @@ impl BibleApp {
 
 				if ui.button("🍄 隐藏笔记").clicked() { 
 					self.show_notes = false;
+					ui.close_kind(egui::UiKind::Menu)
+				}
+
+				if ui.button("➕ 添加注释").clicked() { 
+					let verse = self.selected_verse_num.unwrap_or(-1);
+					// Construct the initial Notedb with the selected verse
+					let comment_note = Notedb {
+						id: Uuid::new_v4().to_string(),
+						created_at: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+						book_num: self.current_book,
+						book_name: self.current_book_name.clone(),
+						chapter: self.current_chapter.clone(),
+						verse_start: verse, // <-- Assigned here
+						char_offset: Some(0),
+						version: Some(self.current_version.clone()),
+						..Default::default()
+					};
+					//self.open_noteapp_window(None, "comments"); 
+					self.open_noteapp_window(Some(&comment_note), "comments");
+					ui.close_kind(egui::UiKind::Menu)
+				}
+
+				if ui.button("💬 显示注释").clicked() { 
+					self.show_comments = true;
+					self.show_highlight = false; 
+					ui.close_kind(egui::UiKind::Menu)
+				}
+
+				if ui.button("🍄 隐藏注释").clicked() { 
+					self.show_comments = false;
 					ui.close_kind(egui::UiKind::Menu)
 				}
 
@@ -1562,7 +1677,7 @@ impl BibleApp {
 
 //打开笔记编辑窗口
 impl BibleApp {
-	fn open_noteapp_window(&self, note_opt: Option<&Notedb>) {
+	fn open_noteapp_window(&self, note_opt: Option<&Notedb>, initial_category: &str) {
 		let note = if let Some(note) = note_opt {
 			note.clone() // 编辑已有笔记
 		} else {
@@ -1600,6 +1715,8 @@ impl BibleApp {
 			.arg("--note-window")
 				.arg("--note-json")
 				.arg(note_json)
+				.arg("--category")
+				.arg(initial_category)
 				.spawn()
 		{
 			eprintln!("无法启动笔记窗口: {e}");
@@ -1987,6 +2104,7 @@ impl BibleApp {
 			//self.draw_font_size_window(ctx);
 			self.font_size_popup(ctx,&colors);
 			self.show_sync_config_window(ctx);
+			self.show_help_window(ctx);
     }
 }
 //update函数
@@ -2050,71 +2168,141 @@ impl eframe::App for BibleApp {
 //main函数
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
-	let args: Vec<String> = std::env::args().collect();
-	if args.len() > 1 && args[1] == "--note-window" {
-		let mut note_json: Option<String> = None;
-		let mut i = 1;
-		while i < args.len() {
-			match args[i].as_str() {
-				"--note-json" => {
-					if let Some(v) = args.get(i + 1) {
-						note_json = Some(v.clone());
-					}
-					i += 1;
-				}
-				_ => {}
-			}
-			i += 1;
-		}
+    let args: Vec<String> = std::env::args().collect();
+    
+		if args.len() > 1 {
+        match args[1].as_str() {
+            "--note-window" => run_editor_window(&args),
+            "--note-reader-window" => run_note_reader_window(&args),
+            _ => run_bible_app(),
+        }
+    } else {
+        run_bible_app()
+    }
+}
 
-		// 反序列化 JSON 为 Notedb
-		let note_data: Notedb = if let Some(nj) = note_json {
-			serde_json::from_str(&nj).unwrap()
-		} else {
-			Notedb {
-				id: Uuid::new_v4().to_string(),
-				created_at: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
-				..Default::default()
-			}
+// 运行笔记窗口
+fn run_editor_window(args: &[String]) -> eframe::Result<()> {
+	let (note_data, category) = parse_note_json_from_args(args);
+
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([700.0, 700.0])
+            .with_title("撰写笔记"),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "撰写笔记",
+        options,
+        Box::new(move |cc| {
+            configure_chinese_font(&cc.egui_ctx);
+						crate::note_app::note_visuals(&cc.egui_ctx);
+            Ok(Box::new(NoteApp { 
+                note: note_data,
+								category,
+                config: crate::notes::AppConfig::load(),
+            }))
+        }),
+    )
+}
+
+// 阅读笔记窗口
+fn run_note_reader_window(args: &[String]) -> eframe::Result<()> {
+		let (note_data, _category) = parse_note_json_from_args(args);
+
+		let initial_view_mode = match note_data.format.as_deref() {
+			Some("markdown") => crate::note_reader::BodyViewMode::Markdown,
+			_ => crate::note_reader::BodyViewMode::PlainText,
 		};
 
-		let options = eframe::NativeOptions {
-			renderer: eframe::Renderer::Wgpu,
-			viewport: egui::ViewportBuilder::default()
-				.with_inner_size([600.0, 600.0])
-				.with_title("撰写笔记"),
-				..Default::default()
-		};
-		eframe::run_native(
-			"撰写笔记",
-			options,
-			Box::new(move |cc| {
-				configure_chinese_font(&cc.egui_ctx);
-				Ok(Box::new(NoteApp { 
-					note: note_data,
-					config: crate::notes::AppConfig::load(),
-				}))
-			}),
-		)
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([700.0, 700.0])
+            .with_title("📖 阅读笔记"),
+        ..Default::default()
+    };
 
-	} else {
-		let options = eframe::NativeOptions {
-			renderer: eframe::Renderer::Wgpu,
-			viewport: egui::ViewportBuilder::default()
-				.with_inner_size([1200.0, 800.0])
-				.with_decorations(false),
-				..Default::default()
-		};
-		eframe::run_native(
-			"圣经阅读器",
-			options,
-			Box::new(move |cc| {
-				configure_chinese_font(&cc.egui_ctx);
-        cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
-            egui::pos2(100.0, 10.0)
-        ));
-				Ok(Box::new(BibleApp::new(cc)))
-			}),
-		)
-	}
+    eframe::run_native(
+        "📖 阅读笔记",
+        options,
+        Box::new(move |cc| {
+            configure_chinese_font(&cc.egui_ctx);
+						crate::note_reader::configure_reader_visuals(&cc.egui_ctx);
+						//cc.egui_ctx.style_mut(|style| {
+						//	style.text_styles.insert(
+						//		egui::TextStyle::Body,
+						//		egui::FontId::proportional(16.0),
+						//	);
+						//});
+            Ok(Box::new(NoteReaderApp {
+                note: note_data,
+								markdown_cache: egui_commonmark::CommonMarkCache::default(),
+								view_mode: initial_view_mode,
+            }))
+        }),
+    )
+}
+
+// 运行圣经阅读器主程序
+fn run_bible_app() -> eframe::Result<()> {
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1200.0, 800.0])
+            .with_decorations(false),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "圣经阅读器",
+        options,
+        Box::new(move |cc| {
+            configure_chinese_font(&cc.egui_ctx);
+            cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
+                egui::pos2(100.0, 1.0)
+            ));
+            Ok(Box::new(BibleApp::new(cc)))
+        }),
+    )
+}
+
+// 提取通用的 JSON 参数解析逻辑
+fn parse_note_json_from_args(args: &[String]) -> (Notedb, String) {
+    let mut note_json: Option<String> = None;
+    let mut category = "notes".to_string(); // 默认分类
+    let mut i = 1;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--note-json" => {
+                if let Some(v) = args.get(i + 1) {
+                    note_json = Some(v.clone());
+                }
+                i += 1;
+            }
+            "--category" => {
+                if let Some(v) = args.get(i + 1) {
+                    category = v.clone();
+                }
+                i += 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let note_data = if let Some(nj) = note_json {
+        serde_json::from_str(&nj).unwrap_or_default()
+    } else {
+        Notedb {
+            id: Uuid::new_v4().to_string(),
+            created_at: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+            ..Default::default()
+        }
+    };
+
+    (note_data, category)
 }

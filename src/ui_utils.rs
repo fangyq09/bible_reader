@@ -101,8 +101,8 @@ impl BibleApp {
 //最大化最小化还原按钮
 impl BibleApp {
 	pub fn draw_custom_buttons(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
-		let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
-		let stroke_fine = egui::Stroke::new(1.0, egui::Color32::WHITE);
+		let stroke = egui::Stroke::new(2.0_f32, egui::Color32::WHITE);
+		let stroke_fine = egui::Stroke::new(1.0_f32, egui::Color32::WHITE);
 		let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
 		let pointer_pos = ctx.input(|i| i.pointer.interact_pos());
 

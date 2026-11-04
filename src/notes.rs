@@ -6,6 +6,7 @@ use crate::ParallelVerse;
 use crate::utils::{version_display_name,sort_versions_chinese_first};
 use std::fs;
 use rfd::FileDialog;
+use uuid::Uuid;
 //use libsql::params;
 //use rusqlite::Connection;
 
@@ -25,6 +26,7 @@ pub struct Notedb {
     pub version: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+		pub format: Option<String>,
 }
 
 #[derive(Debug)]
@@ -122,6 +124,11 @@ pub fn show_appended_notes(
 
     ui.add_space(10.0);
     ui.separator();
+		ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+			ui.heading(egui::RichText::new("笔记"));
+		});
+
+		let mut selected_click = None;
 
     for i in 0..self.appended_notes_current.len() {
 			let note = &self.appended_notes_current[i];
@@ -137,15 +144,16 @@ pub fn show_appended_notes(
 							format!("【{}】「{}」", subject, title)
 						};
             if ui.link(&display_text).clicked(){
-                self.current_note = Some(self.appended_notes_current[i].clone());
-                self.note_window_open = true;
+                //self.current_note = Some(self.appended_notes_current[i].clone());
+                //self.note_window_open = true;
+								selected_click = Some(note.clone());
             }
         });
     }
+		if let Some(note) = selected_click {
+			self.open_note_reader_window_process(Some(&note), "--note-reader-window");
+		}
 }
-}
-
-impl BibleApp {
 	pub fn get_appended_notes(&mut self) {
 		let current_state = match self.current_nav_state() {
 			Some(s) => s,
@@ -157,6 +165,83 @@ impl BibleApp {
 			self.last_appended_notes_state = Some(current_state);
 		}
 	}
+}
+//追加注释
+impl BibleApp {
+    // 1. 获取当前章节的 comments
+    pub fn get_appended_comments(&mut self) {
+        let current_state = match self.current_nav_state() {
+            Some(s) => s,
+            None => return,
+        };
+
+        // 假设你已经在 BibleApp 里定义了 self.appended_comments_current 和 self.last_appended_comments_state
+        if self.last_appended_comments_state.as_ref() != Some(&current_state) {
+            self.appended_comments_current = self.load_notes("comments", "append");
+            self.last_appended_comments_state = Some(current_state);
+        }
+    }
+
+    // 2. 渲染追加的评论（以经文章节/节号为标题标识）
+    pub fn show_appended_comments(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+    ) {
+        if self.appended_comments_current.is_empty() {
+            return;
+        }
+
+        ui.add_space(10.0);
+        ui.separator();
+				ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+					ui.heading(egui::RichText::new("注释"));
+				});
+
+        for i in 0..self.appended_comments_current.len() {
+            let comment = &self.appended_comments_current[i];
+            ui.horizontal(|ui| {
+                ui.label("💬");
+
+                // 不使用 title，而是组合经文位置或 reference 作为标题展示
+                let book_name = comment.book_name.as_deref().unwrap_or("");
+                let chapter = comment.chapter.as_deref().unwrap_or("");
+                let verse = comment.verse_start;
+                
+                // 拼装位置标题，例如：“[创世记 1:1]” 或直接用 comment.reference
+                let location_title = if verse > 0 {
+                    format!("{} {}:{}", book_name, chapter, verse)
+                } else {
+                    format!("{} {}", book_name, chapter)
+                };
+
+                let reference = comment.reference.as_deref().unwrap_or("");
+                let display_text = if !reference.is_empty() {
+                    format!("「{}」 ({})", location_title, reference)
+                } else {
+                    format!("「{}」", location_title)
+                };
+
+                // 点击链接后打开阅读窗口或自适应窗口
+                if ui.link(&display_text).clicked() {
+                    self.current_note = Some(self.appended_comments_current[i].clone());
+										self.note_window_open = true;
+                }
+            });
+
+            // 如果你希望在后面顺便把评论的正文（body）简要预览一行，也可以在这里加：
+            if let Some(body) = comment.body.as_deref() {
+                if !body.is_empty() {
+                    ui.indent("comment_body_indent", |ui| {
+                        ui.label(
+                            egui::RichText::new(body)
+                                .text_style(egui::TextStyle::Small)
+                                .color(ui.visuals().weak_text_color())
+                        );
+                    });
+                }
+            }
+        }
+    }
 }
 
 //笔记阅读窗口
@@ -176,7 +261,11 @@ impl BibleApp {
 					// 笔记内容滚动区域
 					egui::containers::ScrollArea::vertical().show(ui, |ui| {
 						ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-							ui.heading(note.title.as_deref().unwrap_or("笔记"));
+							if let Some(title) = note.title.as_deref() {
+								if !title.is_empty() {
+									ui.heading(egui::RichText::new(title));
+								}
+							}
 							if let Some(reference) = note.reference.as_deref() {
 								if !reference.is_empty() {
 									ui.label(
@@ -296,7 +385,7 @@ impl BibleApp {
 
 							// 编辑按钮
 							if ui.add_sized([btn_w, btn_h], egui::Button::new("编辑")).clicked() {
-								self.open_noteapp_window(self.current_note.as_ref());
+								self.open_noteapp_window(self.current_note.as_ref(),"notes");
 								self.current_note = None;
 								self.note_window_open = false;
 							}
@@ -330,29 +419,27 @@ impl BibleApp {
 	}
 }
 
-//笔记列表样式
 fn draw_notes_list(
-	ui: &mut egui::Ui,
-	colors: &ThemeColors,
-	notes: &Vec<Notedb>,
-	current_note: &mut Option<Notedb>,
-	note_window_open: &mut bool,
+    ui: &mut egui::Ui,
+    colors: &ThemeColors,
+    notes: &Vec<Notedb>,
+    clicked_note: &mut Option<Notedb>,
 ) -> bool {
-	if notes.is_empty() {
-		ui.label("暂无笔记");
-		return false;
-	}
+    if notes.is_empty() {
+        ui.label("暂无内容");
+        return false;
+    }
 
-	let mut request_close = false;
+    let mut request_close = false;
 
     for note in notes {
         let title = note.title.as_deref().unwrap_or("<无标题>");
         let subject = note.subject.as_deref().unwrap_or("");
-				let body = note.body.as_deref().unwrap_or("");
-				let version = version_display_name(note.version.as_deref().unwrap_or(""));
-				let book_name = note.book_name.as_deref().unwrap_or("");
-				let chapter = note.chapter.as_deref().unwrap_or("");
-				let note_location = format!("（{}:{}:{}）", version, book_name, chapter);
+        let body = note.body.as_deref().unwrap_or("");
+        let version = version_display_name(note.version.as_deref().unwrap_or(""));
+        let book_name = note.book_name.as_deref().unwrap_or("");
+        let chapter = note.chapter.as_deref().unwrap_or("");
+        let note_location = format!("（{}:{}:{}）", version, book_name, chapter);
 
         let title_text = if subject.is_empty() {
             format!("📝「{}」", title)
@@ -360,39 +447,27 @@ fn draw_notes_list(
             format!("📝【{}】「{}」", subject, title)
         };
 
-				//===== 无正文预览 ===== 
-				//if hover_link(ui, &title_text, &colors) {
-				//	*current_note = Some(note.clone());
-				//	*note_window_open = true;
-				//	request_close = true;
-				//}
+        let title_response = ui.link(&title_text);
 
-				let title_response = ui.link(&title_text);
-
-        // ===== 第二行：正文预览（单行） =====
-        let _body_response = ui.add(
+        ui.add(
             egui::Label::new(body)
-                .truncate()   // 只显示第一行
+                .truncate()
         );
         ui.add(
             egui::Label::new(
                 egui::RichText::new(note_location)
-                //.size(10.0)
                 .text_style(font_size_tiny())
                 .color(colors.comment_text_color)
-                )
-            .truncate()  
-            );
+            )
+            .truncate()
+        );
 
-        // ===== 点击任意一行都打开 =====
-        //if title_response || body_response.clicked() {
         if title_response.clicked() {
-            *current_note = Some(note.clone());
-            *note_window_open = true;
+            // 记录被点击的笔记及其分类
+            *clicked_note = Some(note.clone());
             request_close = true;
         }
 
-				//ui.add_space(6.0);
         ui.separator();
     }
 
@@ -411,67 +486,109 @@ impl BibleApp {
         }
 
         let mut close_window = false;
-				let mut open_note = false;
-				let mut do_search = false; 
+        let mut do_search = false; 
+        let mut selected_click: Option<Notedb> = None;
+
+        //let cat_string = current_category.to_string();
+        let notes_cache_clone = self.notes_cache.clone();
+
+        // 提前解构需要的字段，避免在闭包内对整个 self 产生冲突借用
+        let search_keyword = &mut self.notes_search_keyword;
+        let active_type = &mut self.active_search_type;
+        let show_window_flag = &mut self.show_notes_list_window;
 
         egui::Window::new(egui::RichText::new("📒 笔记列表").size(14.0))
-            .open(&mut self.show_notes_list_window)
+            .open(show_window_flag)
             .resizable(true)
             .default_width(500.0)
             .show(ctx, |ui| {
-							let response = ui.add(
-								egui::TextEdit::singleline(&mut self.notes_search_keyword)
-								.hint_text(
-									egui::RichText::new("搜索笔记")
-									.color(colors.comment_text_color)
-									.text_style(egui::TextStyle::Small),
-									//.size(14.0),
-								)
-								.desired_width(f32::INFINITY),
-							);
+                let response = ui.add(
+                    egui::TextEdit::singleline(search_keyword)
+                    .hint_text(
+                        egui::RichText::new("搜索笔记")
+                        .color(colors.comment_text_color)
+                        .text_style(egui::TextStyle::Small),
+                    )
+                    .desired_width(f32::INFINITY),
+                );
 
-							if response.clicked() || response.gained_focus() || response.has_focus(){
-								self.active_search_type = "notes".to_string();
-							}
-							if response.clicked_elsewhere() {
-								self.active_search_type = "".to_string();
-							}
+                if response.clicked() || response.gained_focus() || response.has_focus(){
+                    *active_type = "notes".to_string();
+                }
+                if response.clicked_elsewhere() {
+                    *active_type = "".to_string();
+                }
 
-							if ui.input(|i| i.key_pressed(egui::Key::Enter))&& self.active_search_type == "notes"
-							{
-								do_search = true;
-							}
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) && *active_type == "notes"
+                {
+                    do_search = true;
+                }
 
-							ui.separator();
+                ui.separator();
 
-							egui::ScrollArea::vertical()
-								.auto_shrink([false; 2])
-								.show(ui, |ui| {
-									if draw_notes_list(
-										ui,
-										colors,
-										&self.notes_cache,
-										&mut self.current_note,
-										&mut open_note,
-									) {
-										close_window = true;
-									}
-								});
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        if draw_notes_list(
+                            ui,
+                            colors,
+                            &notes_cache_clone,
+                            &mut selected_click,
+                        ) {
+                            close_window = true;
+                        }
+                    });
             });
 
-        // 在 closure 结束之后再关窗口
         if close_window {
             self.show_notes_list_window = false;
         }
 
-				if open_note {
-					self.note_window_open = true; 
-				}
+        // 在窗口闭包完全结束后，安全地调用自适应打开逻辑
+        if let Some(note) = selected_click {
+					self.open_note_reader_window_process(Some(&note), "--note-reader-window");
+        }
 
-				if do_search {
-					let query = parse_search_input(&self.notes_search_keyword);
-					self.notes_cache = self.search_notes_from_db("notes", &query);
-				}
+        if do_search {
+            let query = parse_search_input(&self.notes_search_keyword);
+            self.notes_cache = self.search_notes_from_db("notes", &query);
+        }
+    }
+}
+
+// 用来拉起独立阅读窗口的进程
+impl BibleApp {
+    fn open_note_reader_window_process(&self, note_opt: Option<&Notedb>, flag: &str) {
+        let note = note_opt.cloned().unwrap_or_else(|| Notedb {
+            id: Uuid::new_v4().to_string(),
+            created_at: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+            ..Default::default()
+        });
+
+        let note_json = match serde_json::to_string(&note) {
+            Ok(json) => json,
+            Err(e) => {
+                eprintln!("序列化失败: {e}");
+                return;
+            }
+        };
+
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                eprintln!("无法获取当前可执行文件路径: {e}");
+                return;
+            }
+        };
+
+        if let Err(e) = std::process::Command::new(exe)
+            .arg(flag)
+            .arg("--note-json")
+            .arg(note_json)
+            .spawn()
+        {
+            eprintln!("无法启动独立阅读窗口: {e}");
+        }
     }
 }
 
@@ -500,7 +617,8 @@ pub fn save_note(category: &str, note: &Notedb) {
 						subject TEXT,
 						version TEXT,
 						created_at TEXT,
-						updated_at TEXT
+						updated_at TEXT,
+						format TEXT
 				);",
 				category
 		);
@@ -516,8 +634,8 @@ pub fn save_note(category: &str, note: &Notedb) {
 		let insert_sql = format!(
 				"INSERT OR REPLACE INTO {} (
 					id, book_num, book_name, chapter, verse_start, char_offset,
-						title, keywords, reference, body, subject, version, created_at, updated_at
-				) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+						title, keywords, reference, body, subject, version, created_at, updated_at, format
+				) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
 				category
 		);
 
@@ -538,6 +656,7 @@ pub fn save_note(category: &str, note: &Notedb) {
 						note.version.as_deref().unwrap_or(""),
 						note.created_at.as_deref().unwrap_or(""),
 						now, // updated_at
+						note.format.as_deref().unwrap_or("plaintext"),
 				],
 		);
 
@@ -603,7 +722,7 @@ impl BibleApp {
                     "version = ?3",
                 ];
 
-                if category != self.current_version {
+								if category == "notes" && category != self.current_version {
                     conditions.push("verse_start < 0");
                 }
 
@@ -624,7 +743,8 @@ impl BibleApp {
                         subject,
                         version,
                         created_at,
-                        updated_at
+                        updated_at,
+												format
                      FROM {}
                      WHERE {}
 										 ORDER BY COALESCE(updated_at, created_at) DESC;",
@@ -662,6 +782,7 @@ impl BibleApp {
                             version: row.get(11)?,
                             created_at: row.get(12)?,
                             updated_at: row.get(13)?,
+														format: row.get(14)?,
                         })
                     },
                 );
@@ -692,7 +813,8 @@ impl BibleApp {
                         subject,
                         version,
                         created_at,
-                        updated_at
+                        updated_at,
+												format
                      FROM {}
 										 ORDER BY COALESCE(updated_at, created_at) DESC;",
                     category
@@ -722,6 +844,7 @@ impl BibleApp {
                         version: row.get(11)?,
                         created_at: row.get(12)?,
                         updated_at: row.get(13)?,
+												format: row.get(14)?,
                     })
                 });
 
@@ -865,7 +988,7 @@ impl BibleApp {
         "SELECT
             id, book_num, book_name, chapter, verse_start, char_offset,
             title, keywords, reference, body, subject, version,
-            created_at, updated_at
+            created_at, updated_at, format
          FROM {}
          WHERE {}
          ORDER BY COALESCE(updated_at, created_at) DESC;",
@@ -896,6 +1019,7 @@ impl BibleApp {
                 version: row.get(11)?,
                 created_at: row.get(12)?,
                 updated_at: row.get(13)?,
+								format: row.get(14)?,
             })
         },
     );
@@ -1144,8 +1268,8 @@ pub async fn sync_to_turso(
     let insert_sql = format!(
         "INSERT OR REPLACE INTO {} (
             id, book_num, book_name, chapter, verse_start, char_offset,
-            title, keywords, reference, body, subject, version, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            title, keywords, reference, body, subject, version, created_at, updated_at, format
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         category
     );
 
@@ -1164,6 +1288,7 @@ pub async fn sync_to_turso(
         note.version.as_deref(),
         note.created_at.as_deref(),
         note.updated_at.as_deref(),
+        note.format.as_deref(),
     ]).await?;
 
     Ok(())
@@ -1303,7 +1428,7 @@ pub async fn sync_all_notes(
 	let local_notes: Vec<Notedb> = {
 		let local_conn = rusqlite::Connection::open(&db_path)?;
 		let mut stmt = local_conn.prepare(&format!(
-				"SELECT id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at FROM {}", 
+				"SELECT id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at, format FROM {}", 
 				category
 		))?;
 
@@ -1323,6 +1448,7 @@ pub async fn sync_all_notes(
 				version: row.get(11)?,
 				created_at: row.get(12)?,
 				updated_at: row.get(13)?,
+				format: row.get(14)?,
 			})
 		})?;
 		// 立即 collect 进 Vec，脱离对 rusqlite 迭代器的依赖
@@ -1416,7 +1542,7 @@ pub async fn fetch_single_note_from_turso(
     id: &str,
     conn: &libsql::Connection,
 ) -> Result<Option<Notedb>, Box<dyn std::error::Error + Send + Sync>> {
-    let sql = format!("SELECT id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at FROM {} WHERE id = ?1", category);
+    let sql = format!("SELECT id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at, format FROM {} WHERE id = ?1", category);
     let mut rows = conn.query(&sql, [id]).await?;
 
     if let Some(row) = rows.next().await? {
@@ -1435,6 +1561,7 @@ pub async fn fetch_single_note_from_turso(
             version: row.get(11)?,
             created_at: row.get(12)?,
             updated_at: row.get(13)?,
+						format: row.get(14)?,
         }))
     } else {
         Ok(None)
@@ -1451,8 +1578,8 @@ pub fn save_note_pure_local(category: &str, note: &Notedb) {
 
     if let Ok(conn) = rusqlite::Connection::open(&db_path) {
         let sql = format!(
-            "REPLACE INTO {} (id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "REPLACE INTO {} (id, book_num, book_name, chapter, verse_start, char_offset, title, keywords, reference, body, subject, version, created_at, updated_at, format) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             category
         );
 
@@ -1473,6 +1600,7 @@ pub fn save_note_pure_local(category: &str, note: &Notedb) {
                 note.version,
                 note.created_at,
                 note.updated_at,
+                note.format,
             ],
         );
     }
@@ -1495,7 +1623,7 @@ pub async fn enable_sync_service(
             id TEXT PRIMARY KEY, book_num INTEGER, book_name TEXT,
             chapter TEXT, verse_start INTEGER, char_offset INTEGER,
             title TEXT, keywords TEXT, reference TEXT, body TEXT,
-            subject TEXT, version TEXT, created_at TEXT, updated_at TEXT
+            subject TEXT, version TEXT, created_at TEXT, updated_at TEXT, format TEXT
         );"
     );
 		// 云端初始化
