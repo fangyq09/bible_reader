@@ -3,7 +3,7 @@
 mod theme;
 mod utils;
 mod notes;
-mod note_app;
+mod note_editor;
 mod note_reader;
 mod ui_utils;
 use std::fs;
@@ -30,7 +30,7 @@ use crate::utils::{
 	parse_verse_num_at_index,
 };
 use crate::notes::{Notedb, AppConfig, sync_all_notes};
-use crate::note_app::NoteApp;
+use crate::note_editor::NoteApp;
 use crate::note_reader::{NoteReaderApp};
 
 #[derive(PartialEq, Clone)]
@@ -124,21 +124,21 @@ pub fn configure_chinese_font(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
 		// 1. 注册中文字体
     fonts.font_data.insert(
-        "chinese_font".to_string(),
+        "chinese_regular".to_string(),
         FontData::from_static(include_bytes!("../assets/fonts/SourceHanSansCN-Regular.otf")).into(),
         //FontData::from_static(include_bytes!("../assets/fonts/MiSans-Regular.otf")).into(),
     );
 	
 		// 2. 安全地插入 Proportional 字体族
     if let Some(proportional) = fonts.families.get_mut(&FontFamily::Proportional) {
-        proportional.insert(0, "chinese_font".to_string());
+        proportional.insert(0, "chinese_regular".to_string());
     }
     
     // 注意：Monospace 最好保留系统默认等宽，或者如果你希望代码块也用思源黑体可以保留下面这行
     if let Some(monospace) = fonts.families.get_mut(&FontFamily::Monospace) {
         monospace.insert(0, "chinese_font".to_string());
     }
-    
+
     ctx.set_fonts(fonts);
 		// 强行固定正文字号为 16.0
     ctx.style_mut(|style| {
@@ -172,7 +172,7 @@ impl BibleApp {
 			("和修本.sqlite3", include_bytes!("../assets/sqlite/rcuvss.sqlite3")),
 			("当代译本.sqlite3", include_bytes!("../assets/sqlite/ccb.sqlite3")),
 			("NET.sqlite3", include_bytes!("../assets/sqlite/NET.sqlite3")),
-			("SG21.sqlite3", include_bytes!("../assets/sqlite/sg21.sqlite3")),
+			("SG21.sqlite3", include_bytes!("../assets/sqlite/SG21.sqlite3")),
 		];
 
 		for (filename, content) in built_in_files {
@@ -181,6 +181,11 @@ impl BibleApp {
 				fs::write(&target, content).expect("写入内置译本失败");
 			}
 		}
+
+		// 禁用 egui 默认的 Ctrl+加减号全局缩放功能
+		cc.egui_ctx.options_mut(|options| {
+			options.zoom_with_keyboard = false;
+		});
 
 		// ---------- 加载中文字体 ----------
 		configure_chinese_font(&cc.egui_ctx);
@@ -1164,6 +1169,8 @@ impl BibleApp {
 					ui.add_space(16.0);
 					ui.heading("⌨快捷键指南");
 					ui.add_space(4.0);
+					ui.label("• Ctrl + = : 正文显示区字体放大");
+					ui.label("• Ctrl + - : 正文显示区字体缩小");
 					ui.label("• Ctrl + O : 后退（跳转回上一个历史位置）");
 					ui.label("• Ctrl + I : 前进（恢复到下一个历史位置）");
 					ui.label("• Alt + 数字 (1-9) : 在当前阅读位置设置书签");
@@ -2041,6 +2048,10 @@ impl BibleApp {
 			self.apply_nav_state(target);
 		}
 	}
+}
+
+//转跳快捷键
+impl BibleApp {
 	fn check_jump_shortcuts(&mut self, ctx: &egui::Context) {
 		// 遍历当前帧所有键事件
 		for event in &ctx.input(|i| i.events.clone()) {
@@ -2090,6 +2101,28 @@ impl BibleApp {
 				}
 			}
 		}
+	}
+}
+
+// 字体大小快捷键
+impl BibleApp {
+	fn check_font_size_shortcuts(&mut self, ctx: &egui::Context) {
+		ctx.input_mut(|i| {
+			// 检测 Ctrl + (主键盘的 Equals/Plus 键)
+			let zoom_in = i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Equals))
+				|| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Plus));
+
+			if zoom_in {
+				self.body_font_size = (self.body_font_size + 1.0).min(48.0);
+			}
+
+			// 检测 Ctrl - (主键盘的 Minus 键)
+			let zoom_out = i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Minus));
+
+			if zoom_out {
+				self.body_font_size = (self.body_font_size - 1.0).max(16.0);
+			}
+		});
 	}
 }
 
@@ -2158,6 +2191,7 @@ impl eframe::App for BibleApp {
 
 		// 检测快捷键
 		self.check_jump_shortcuts(ctx);
+		self.check_font_size_shortcuts(ctx);
 
 		// --- 自制titlebar 在这里画全局边框 ---
 		if !ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
@@ -2198,7 +2232,7 @@ fn run_editor_window(args: &[String]) -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             configure_chinese_font(&cc.egui_ctx);
-						crate::note_app::note_visuals(&cc.egui_ctx);
+						crate::note_editor::note_visuals(&cc.egui_ctx);
             Ok(Box::new(NoteApp { 
                 note: note_data,
 								category,
