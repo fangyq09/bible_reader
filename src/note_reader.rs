@@ -131,11 +131,15 @@ impl eframe::App for NoteReaderApp {
 			ui.horizontal(|ui| {
 				// 检查 reference 是否存在且不为空字符串
 				if let Some(ref_text) = self.note.reference.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-					ui.label(egui::RichText::new(format!("📍 引用: {ref_text}")).weak());
+					ui.label(egui::RichText::new(format!("📍 引用经文: {ref_text}")).size(14.0).weak());
 				}
 				if let Some(ref time) = self.note.created_at {
 					let date_only = if time.len() >= 10 { &time[0..10] } else { time };
-					ui.label(egui::RichText::new(format!("🕒 {date_only}")).weak());
+					ui.label(egui::RichText::new(format!("🕒创建日期：{date_only}")).size(14.0).weak());
+				}
+				if let Some(ref time) = self.note.updated_at {
+					let date_only = if time.len() >= 10 { &time[0..10] } else { time };
+					ui.label(egui::RichText::new(format!("🕒修改日期：{date_only}")).size(14.0).weak());
 				}
 
 				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
